@@ -1,6 +1,8 @@
 "use client";
 
-import type { RoutePlan, TravelMode } from "@/types";
+import type { RoutePlan, TransportPrefs, AnimationStatus } from "@/types";
+import { modeLabel, modeColor } from "@/route-engine/mode-decider";
+import TransportCheckboxes from "@/ui/TransportCheckboxes";
 
 /** 格式化距离 */
 function formatDistance(m: number): string {
@@ -18,24 +20,28 @@ function formatDuration(s: number): string {
   return rest > 0 ? `${h}小时${rest}分钟` : `${h}小时`;
 }
 
-const MODES: { key: TravelMode; label: string }[] = [
-  { key: "driving", label: "驾车" },
-  { key: "bicycling", label: "骑行" },
-  { key: "walking", label: "步行" },
-];
-
 interface RouteCardProps {
   planning: boolean;
   routePlan: RoutePlan | null;
-  travelMode: TravelMode;
-  onTravelModeChange: (mode: TravelMode) => void;
+  transportPrefs: TransportPrefs;
+  onTransportPrefsChange: (prefs: TransportPrefs) => void;
+  animStatus?: AnimationStatus;
+  animSegmentIndex?: number;
+  onPlay?: () => void;
+  onPause?: () => void;
+  onReset?: () => void;
 }
 
 export default function RouteCard({
   planning,
   routePlan,
-  travelMode,
-  onTravelModeChange,
+  transportPrefs,
+  onTransportPrefsChange,
+  animStatus,
+  animSegmentIndex,
+  onPlay,
+  onPause,
+  onReset,
 }: RouteCardProps) {
   if (planning) {
     return (
@@ -51,12 +57,24 @@ export default function RouteCard({
   if (!routePlan || routePlan.segments.length === 0) {
     return (
       <div className="p-4 shrink-0">
-        <div className="rounded-xl shadow bg-card p-4 text-center">
-          <p className="text-sm text-muted">请输入店铺名称开始规划路线</p>
+        <div className="rounded-xl shadow bg-card p-4">
+          {/* 交通方式选择 */}
+          <div className="mb-3">
+            <TransportCheckboxes
+              prefs={transportPrefs}
+              onChange={onTransportPrefsChange}
+            />
+          </div>
+          <p className="text-sm text-muted text-center">
+            请输入店铺名称开始规划路线
+          </p>
         </div>
       </div>
     );
   }
+
+  const isAnimating = animStatus === "playing";
+  const hasAnimation = !!onPlay;
 
   return (
     <div className="p-4 shrink-0">
@@ -65,22 +83,53 @@ export default function RouteCard({
         <div className="px-4 py-3 border-b border-border">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold">路线详情</h3>
-            <div className="flex gap-1">
-              {MODES.map((m) => (
-                <button
-                  key={m.key}
-                  onClick={() => onTravelModeChange(m.key)}
-                  className={`px-2.5 py-1 text-xs rounded-full transition-colors ${
-                    travelMode === m.key
-                      ? "bg-primary text-white"
-                      : "bg-secondary text-muted active:bg-border"
-                  }`}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
+            {/* 动画控制 */}
+            {hasAnimation && (
+              <div className="flex items-center gap-1">
+                {animStatus === "playing" ? (
+                  <button
+                    onClick={onPause}
+                    className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                      <rect x="6" y="4" width="4" height="16" />
+                      <rect x="14" y="4" width="4" height="16" />
+                    </svg>
+                  </button>
+                ) : (
+                  <button
+                    onClick={onPlay}
+                    className="w-7 h-7 rounded-full bg-primary text-white flex items-center justify-center"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  </button>
+                )}
+                {onReset && (
+                  <button
+                    onClick={onReset}
+                    className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M1 4v6h6M23 20v-6h-6" />
+                      <path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            )}
           </div>
+
+          {/* 交通方式勾选 */}
+          <div className="mb-3">
+            <TransportCheckboxes
+              prefs={transportPrefs}
+              onChange={onTransportPrefsChange}
+              disabled={isAnimating}
+            />
+          </div>
+
           <div className="flex items-center justify-between">
             <div>
               <span className="text-2xl font-semibold text-primary">
@@ -99,31 +148,54 @@ export default function RouteCard({
 
         {/* 每段路线（可滚动） */}
         <div className="max-h-48 overflow-y-auto">
-          <div className="p-4 space-y-3">
-            {routePlan.segments.map((seg, idx) => (
-              <div key={idx} className="flex items-start gap-3">
-                {/* 序号 + 连接线 */}
-                <div className="flex flex-col items-center shrink-0 pt-0.5">
-                  <div className="w-5 h-5 rounded-full bg-primary text-white text-xs flex items-center justify-center font-medium">
-                    {idx + 1}
+          <div className="p-4 space-y-2">
+            {routePlan.segments.map((seg, idx) => {
+              const isActive =
+                animSegmentIndex !== undefined && animSegmentIndex === idx && isAnimating;
+              const color = modeColor(seg.mode);
+
+              return (
+                <div
+                  key={idx}
+                  className={`flex items-start gap-3 p-2 rounded-lg transition-all duration-300 ${
+                    isActive
+                      ? "bg-primary-light scale-[1.02]"
+                      : ""
+                  }`}
+                >
+                  {/* 序号 + 连接线 */}
+                  <div className="flex flex-col items-center shrink-0 pt-0.5">
+                    <div
+                      className="w-5 h-5 rounded-full text-white text-xs flex items-center justify-center font-medium transition-transform"
+                      style={{ backgroundColor: isActive ? "#007AFF" : color }}
+                    >
+                      {idx + 1}
+                    </div>
+                    {idx < routePlan.segments.length - 1 && (
+                      <div className="w-px flex-1 min-h-6 bg-border mt-0.5" />
+                    )}
                   </div>
-                  {idx < routePlan.segments.length - 1 && (
-                    <div className="w-px flex-1 min-h-6 bg-border mt-0.5" />
-                  )}
+                  {/* 路线信息 */}
+                  <div className="flex-1 min-w-0 pb-1">
+                    <p className="text-sm leading-tight">
+                      <span className="text-muted">{seg.from.name}</span>
+                      <span className="mx-1 text-border">→</span>
+                      <span className="font-medium">{seg.to.name}</span>
+                    </p>
+                    <p className="text-xs mt-0.5 flex items-center gap-2">
+                      <span
+                        className="inline-block w-1.5 h-1.5 rounded-full"
+                        style={{ backgroundColor: color }}
+                      />
+                      <span className="text-muted">
+                        {modeLabel(seg.mode)} · {formatDistance(seg.distance)} ·{" "}
+                        {formatDuration(seg.duration)}
+                      </span>
+                    </p>
+                  </div>
                 </div>
-                {/* 路线信息 */}
-                <div className="flex-1 min-w-0 pb-1">
-                  <p className="text-sm leading-tight">
-                    <span className="text-muted">{seg.from.name}</span>
-                    <span className="mx-1 text-border">→</span>
-                    <span className="font-medium">{seg.to.name}</span>
-                  </p>
-                  <p className="text-xs text-muted mt-0.5">
-                    {formatDistance(seg.distance)} · {formatDuration(seg.duration)}
-                  </p>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>

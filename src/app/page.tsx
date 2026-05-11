@@ -1,30 +1,38 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import AMapContainer from "@/components/AMapContainer";
 import ShopInput from "@/components/ShopInput";
 import RouteCard from "@/components/RouteCard";
 import { useGeolocation } from "@/hooks/useGeolocation";
 import { useMarkers } from "@/hooks/useMarkers";
 import { useRouteLine } from "@/hooks/useRouteLine";
+import { useRouteAnimation } from "@/hooks/useRouteAnimation";
 import { searchAllShops } from "@/services/poi";
-import { planRoute } from "@/services/route";
+import { planSmartRoute } from "@/route-engine/planner";
 import type {
   UserLocation,
   ShopInput as ShopInputType,
   RoutePlan,
-  TravelMode,
+  TransportPrefs,
   POIResult,
 } from "@/types";
 
-/** 成都市中心坐标 */
 const CHENGDU_CENTER: [number, number] = [104.0657, 30.6573];
+
+/** 默认交通偏好：全部开启（系统智能选择） */
+const DEFAULT_PREFS: TransportPrefs = {
+  walking: true,
+  bicycling: true,
+  driving: true,
+};
 
 export default function Home() {
   const [map, setMap] = useState<AMap.Map | null>(null);
   const { locating, getUserLocation, error: geoError } = useGeolocation();
   const { showMarkers, clearMarkers } = useMarkers();
-  const { drawRoute, clearLines } = useRouteLine();
+  const { drawRoute, clearLines, setOnHover } = useRouteLine();
+  const routeAnimation = useRouteAnimation();
   const userMarkerRef = useRef<AMap.Marker | null>(null);
 
   const [shops, setShops] = useState<ShopInputType[]>([
@@ -34,7 +42,14 @@ export default function Home() {
   const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
   const [foundPOIs, setFoundPOIs] = useState<POIResult[]>([]);
   const [routePlan, setRoutePlan] = useState<RoutePlan | null>(null);
-  const [travelMode, setTravelMode] = useState<TravelMode>("driving");
+  const [transportPrefs, setTransportPrefs] = useState<TransportPrefs>(DEFAULT_PREFS);
+  const [hoveredSegment, setHoveredSegment] = useState<number | null>(null);
+
+  // 动画时禁用交通方式切换
+  const prefsEffective = useMemo(() => {
+    if (routeAnimation.animState.status === "playing") return transportPrefs;
+    return transportPrefs;
+  }, [transportPrefs, routeAnimation.animState.status]);
 
   // 页面加载后自动定位
   useEffect(() => {
@@ -83,6 +98,7 @@ export default function Home() {
     moveToUserLocation(loc);
   }, [getUserLocation, moveToUserLocation]);
 
+  /** 规划路线 */
   const handlePlanRoute = useCallback(async () => {
     const validShops = shops.filter((s) => s.name.trim());
     if (validShops.length === 0) return;
@@ -90,6 +106,7 @@ export default function Home() {
     setPlanning(true);
     clearMarkers();
     clearLines();
+    routeAnimation.cleanup();
     setRoutePlan(null);
     setFoundPOIs([]);
 
@@ -97,6 +114,7 @@ export default function Home() {
       prev.map((s) => (s.name.trim() ? { ...s, loading: true } : s))
     );
 
+    // POI 搜索
     const results = await searchAllShops(validShops);
     setShops(results);
 
@@ -110,41 +128,68 @@ export default function Home() {
       )
       .map((s) => s.poi);
 
-    setFoundPOIs(pois);
-
-    if (map) showMarkers(map, pois);
-
-    if (pois.length > 0) {
-      const plan = await planRoute(userLocation, pois, travelMode);
-      setRoutePlan(plan);
-      if (map) drawRoute(map, plan);
+    if (pois.length === 0) {
+      setPlanning(false);
+      return;
     }
 
-    setPlanning(false);
-  }, [shops, map, userLocation, travelMode, showMarkers, clearMarkers, clearLines, drawRoute]);
+    // 智能混合路线规划
+    const plan = await planSmartRoute(userLocation, pois, transportPrefs);
 
-  const handleTravelModeChange = useCallback(
-    async (mode: TravelMode) => {
-      setTravelMode(mode);
+    // 用优化后的 order 更新 POI（确保 Marker 编号同步）
+    setFoundPOIs(plan.order);
+    setRoutePlan(plan);
+
+    // 按优化顺序显示 Marker
+    if (map) showMarkers(map, plan.order);
+
+    // 绘制路线
+    if (map) drawRoute(map, plan);
+
+    // 初始化动画
+    if (map) routeAnimation.init(map, plan);
+
+    setPlanning(false);
+  }, [
+    shops, map, userLocation, transportPrefs,
+    showMarkers, clearMarkers, clearLines, drawRoute,
+    routeAnimation,
+  ]);
+
+  /** 交通偏好变化时重新规划 */
+  const handleTransportPrefsChange = useCallback(
+    async (prefs: TransportPrefs) => {
+      setTransportPrefs(prefs);
       if (foundPOIs.length === 0) return;
+
       clearLines();
+      routeAnimation.cleanup();
       setPlanning(true);
-      const plan = await planRoute(userLocation, foundPOIs, mode);
+
+      const plan = await planSmartRoute(userLocation, foundPOIs, prefs);
       setRoutePlan(plan);
+
       if (map) drawRoute(map, plan);
+      if (map) routeAnimation.init(map, plan);
+
       setPlanning(false);
     },
-    [foundPOIs, userLocation, map, clearLines, drawRoute]
+    [foundPOIs, userLocation, map, clearLines, drawRoute, routeAnimation]
   );
+
+  // 路线 hover 回传
+  useEffect(() => {
+    setOnHover((idx: number | null) => setHoveredSegment(idx));
+  }, [setOnHover]);
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* 顶部：标题 + 定位 */}
+      {/* 顶部 */}
       <header className="px-4 pt-4 pb-2 shrink-0 flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold">成都探店路线规划</h1>
           <p className="text-xs text-muted mt-0.5">
-            输入想吃的店铺，自动规划最顺路路线
+            智能混合交通 · 自动最优路线
           </p>
         </div>
         <button
@@ -169,10 +214,10 @@ export default function Home() {
         </div>
       )}
 
-      {/* 店铺输入区 */}
+      {/* 店铺输入 */}
       <ShopInput shops={shops} onShopsChange={setShops} onPlanRoute={handlePlanRoute} />
 
-      {/* 地图区域 */}
+      {/* 地图 */}
       <div className="flex-1 min-h-0 mx-4 rounded-xl overflow-hidden shadow-md">
         <AMapContainer onMapReady={handleMapReady} />
       </div>
@@ -181,8 +226,17 @@ export default function Home() {
       <RouteCard
         planning={planning}
         routePlan={routePlan}
-        travelMode={travelMode}
-        onTravelModeChange={handleTravelModeChange}
+        transportPrefs={prefsEffective}
+        onTransportPrefsChange={handleTransportPrefsChange}
+        animStatus={routeAnimation.animState.status}
+        animSegmentIndex={
+          routeAnimation.animState.status === "playing"
+            ? routeAnimation.animState.currentSegmentIndex
+            : hoveredSegment ?? undefined
+        }
+        onPlay={routeAnimation.play}
+        onPause={routeAnimation.pause}
+        onReset={routeAnimation.reset}
       />
     </div>
   );

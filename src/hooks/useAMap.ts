@@ -1,21 +1,26 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { loadAMapSDK, isAMapReady } from "@/lib/amap";
+import { loadAMapSDK, isAMapReady, resetLoader } from "@/lib/amap";
 
 export function useAMap() {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const loadedRef = useRef(false);
+  const attemptRef = useRef(0);
 
-  useEffect(() => {
-    if (loadedRef.current || isAMapReady()) {
+  const doLoad = useCallback(() => {
+    if (isAMapReady()) {
+      loadedRef.current = true;
       setLoaded(true);
       setLoading(false);
-      loadedRef.current = true;
+      setError(null);
       return;
     }
+
+    setLoading(true);
+    setError(null);
 
     loadAMapSDK()
       .then(() => {
@@ -28,6 +33,18 @@ export function useAMap() {
         setLoading(false);
       });
   }, []);
+
+  useEffect(() => {
+    if (loadedRef.current) return;
+    doLoad();
+  }, [doLoad]);
+
+  const reload = useCallback(() => {
+    resetLoader();
+    loadedRef.current = false;
+    attemptRef.current++;
+    doLoad();
+  }, [doLoad]);
 
   const createMap = useCallback(
     (
@@ -68,6 +85,7 @@ export function useAMap() {
     loaded,
     loading,
     error,
+    reload,
     createMap,
     createMarker,
     createPolyline,
