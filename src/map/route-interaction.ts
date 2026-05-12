@@ -27,7 +27,7 @@ export function createInteractiveRoute(
   onHover?: (index: number, e: { lnglat: { lng: number; lat: number } }) => void,
   onLeave?: (index: number) => void
 ): HoverablePolyline {
-  const color = modeColor(segment.mode, segment.transitType);
+  const color = modeColor(segment.mode);
 
   // 白色描边
   const outline = new window.AMap.Polyline({

@@ -215,8 +215,8 @@ export default function RouteCard({
             {routePlan.segments.map((seg, idx) => {
               const isActive =
                 animSegmentIndex !== undefined && animSegmentIndex === idx && isAnimating;
-              const color = modeColor(seg.mode, seg.transitType);
-              const isTransitLeg = seg.mode === "transit";
+              const color = modeColor(seg.mode);
+              const isTransitLeg = seg.mode === "subway" || seg.mode === "bus";
               const hasCategory = !!seg.to.categoryIcon;
               const canReorder = seg.orderIndex !== undefined && onMoveUp && onMoveDown;
               const isFirst = seg.orderIndex === 0;

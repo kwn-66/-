@@ -31,17 +31,15 @@ export interface ShopInput {
 }
 
 /** 单一交通方式 */
-export type TravelMode = "walking" | "bicycling" | "driving" | "transit";
-
-/** 公交子类型（用于 UI 颜色区分） */
-export type TransitType = "subway" | "bus";
+export type TravelMode = "walking" | "bicycling" | "driving" | "subway" | "bus";
 
 /** 交通方式偏好设置 */
 export interface TransportPrefs {
   walking: boolean;
   bicycling: boolean;
   driving: boolean;
-  transit: boolean;
+  subway: boolean;
+  bus: boolean;
 }
 
 /** 每段路线推荐的交通方式元信息 */
@@ -69,12 +67,10 @@ export interface RouteSegment {
   duration: number;
   mode: TravelMode;
   path: [number, number][];
-  /** 公交/地铁线路名，如 "地铁2号线"、"公交34路" */
+  /** 线路名，如 "地铁2号线"、"公交34路" */
   transitName?: string;
   /** 途经站数 */
   stationCount?: number;
-  /** 公交子类型，用于 UI 着色 */
-  transitType?: TransitType;
   /** 对应的 POI order 索引（仅 POI 目的段有值，用于排序） */
   orderIndex?: number;
 }

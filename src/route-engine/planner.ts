@@ -9,7 +9,6 @@ import type {
   RoutePlan,
   RouteSegment,
   MultiRoutePlan,
-  TransitType,
 } from "@/types";
 
 /** 从路线 steps 中提取路径坐标 */
@@ -81,7 +80,8 @@ function calculateSegment(
             driving: 8,
             bicycling: 3,
             walking: 1.2,
-            transit: 5,
+            subway: 7,
+            bus: 5,
           };
           resolve({
             distance: Math.round(dist),
@@ -123,7 +123,7 @@ function calculateTransitSegments(
           to: { name: toName, location: to, categoryIcon: poiCategoryIcon, categoryName: poiCategoryName },
           distance: Math.round(dist),
           duration: Math.round(dist / 5),
-          mode: "transit",
+          mode: "bus",
           path: [from, to],
         },
       ]);
@@ -147,16 +147,11 @@ function calculateTransitSegments(
               : [seg.transit?.end_stop?.location?.lng || to[0], seg.transit?.end_stop?.location?.lat || to[1]];
 
             let mode: TravelMode = "walking";
-            let transitType: TransitType | undefined;
 
-            if (seg.transit_mode === "WALK" || seg.transit_mode === "步行") {
-              mode = "walking";
-            } else if (seg.transit_mode === "SUBWAY" || seg.transit_mode === "地铁") {
-              mode = "transit";
-              transitType = "subway";
+            if (seg.transit_mode === "SUBWAY" || seg.transit_mode === "地铁") {
+              mode = "subway";
             } else if (seg.transit_mode === "BUS" || seg.transit_mode === "公交") {
-              mode = "transit";
-              transitType = "bus";
+              mode = "bus";
             }
 
             segments.push({
@@ -173,7 +168,6 @@ function calculateTransitSegments(
               path: seg.path || [prevLoc, nextLoc],
               transitName: seg.transit?.name,
               stationCount: seg.transit?.via_num,
-              transitType,
             });
 
             prevName = nextName;
@@ -206,7 +200,7 @@ function fallbackTransitSegment(
       to: { name: toName, location: to, categoryIcon: poiCategoryIcon, categoryName: poiCategoryName },
       distance: Math.round(dist),
       duration: Math.round(dist / 5),
-      mode: "transit",
+      mode: "bus",
       path: [from, to],
     },
   ];
@@ -293,7 +287,8 @@ export async function planMultiRoute(
     walking: prefs.walking,
     bicycling: false,
     driving: true,
-    transit: true,
+    subway: true,
+    bus: true,
   };
 
   const plan3 = await buildPlanFromOrder(
@@ -312,8 +307,8 @@ export async function planMultiRoute(
   return { plans, labels, currentIndex: 0 };
 }
 
-/** 按给定顺序构建完整路线（逐段计算，公交换乘自动展开） */
-async function buildPlanFromOrder(
+/** 按给定顺序构建完整路线（逐段计算，公交换乘自动展开，不做路径优化） */
+export async function buildPlanFromOrder(
   userLocation: UserLocation | null,
   order: POIResult[],
   prefs: TransportPrefs
@@ -336,7 +331,7 @@ async function buildPlanFromOrder(
     );
     const bestMode = decideBestMode(straightDist, prefs);
 
-    if (bestMode === "transit") {
+    if (bestMode === "subway" || bestMode === "bus") {
       const subSegs = await calculateTransitSegments(
         prevPoint,
         poi.location,

@@ -9,12 +9,14 @@ import CategoryCards from "@/features/category/CategoryCards";
 import StoreFeed from "@/features/store-feed/StoreFeed";
 import RoutePool from "@/features/route-pool/RoutePool";
 import SavedRoutes from "@/features/saved-routes/SavedRoutes";
+import BottomSheet from "@/ui/BottomSheet";
+import type { SheetState } from "@/ui/BottomSheet";
 import { useGeolocation } from "@/hooks/useGeolocation";
 import { useMarkers } from "@/hooks/useMarkers";
 import { useRouteLine } from "@/hooks/useRouteLine";
 import { useRouteAnimation } from "@/hooks/useRouteAnimation";
 import { searchAllShops, searchMultiCategories, searchGroupedByCategory, loadMoreForCategory } from "@/services/poi";
-import { planSmartRoute, planMultiRoute } from "@/route-engine/planner";
+import { planSmartRoute, planMultiRoute, buildPlanFromOrder } from "@/route-engine/planner";
 import { saveRoute as persistRoute } from "@/features/saved-routes/storage";
 import { getAllCities } from "@/cities/registry";
 import type {
@@ -34,7 +36,8 @@ const DEFAULT_PREFS: TransportPrefs = {
   walking: true,
   bicycling: true,
   driving: true,
-  transit: true,
+  subway: true,
+  bus: true,
 };
 
 export default function Home() {
@@ -77,6 +80,29 @@ export default function Home() {
   // ---- 保存路线 ----
   const [saveDisabled, setSaveDisabled] = useState(false);
   const [showCityPicker, setShowCityPicker] = useState(false);
+
+  // ---- Bottom Sheet 状态 ----
+  const [sheetState, setSheetState] = useState<SheetState>("collapsed");
+
+  // 根据 sheet 状态调整地图可视区域
+  const adjustMapPadding = useCallback(
+    (st: SheetState) => {
+      if (!map) return;
+      if (st !== "collapsed") {
+        const center = map.getCenter();
+        map.setCenter([center.lng, center.lat - 0.003]);
+      }
+    },
+    [map]
+  );
+
+  const handleSheetChange = useCallback(
+    (st: SheetState) => {
+      setSheetState(st);
+      adjustMapPadding(st);
+    },
+    [adjustMapPadding]
+  );
 
   const prefsEffective = useMemo(() => transportPrefs, [transportPrefs]);
 
@@ -287,6 +313,7 @@ export default function Home() {
 
       setPlanning(false);
       setActiveTab("route");
+      setSheetState("half");
     },
     [
       userLocation, transportPrefs, map,
@@ -453,7 +480,7 @@ export default function Home() {
     [foundPOIs, userLocation, map, clearLines, drawRoute, routeAnimation]
   );
 
-  // ---- 路线节点排序 ----
+  // ---- 路线节点排序（手动模式：保留用户顺序，仅重算 segments） ----
   const handleMoveUp = useCallback(
     async (orderIndex: number) => {
       if (!routePlan || orderIndex <= 0) return;
@@ -464,7 +491,8 @@ export default function Home() {
       routeAnimation.cleanup();
       setPlanning(true);
 
-      const plan = await planSmartRoute(userLocation, newOrder, transportPrefs);
+      // 直接用用户顺序构建路线，不跑 optimizeOrder
+      const plan = await buildPlanFromOrder(userLocation, newOrder, transportPrefs);
       setRoutePlan(plan);
       setFoundPOIs(plan.order);
       setMultiPlan(null);
@@ -486,7 +514,7 @@ export default function Home() {
       routeAnimation.cleanup();
       setPlanning(true);
 
-      const plan = await planSmartRoute(userLocation, newOrder, transportPrefs);
+      const plan = await buildPlanFromOrder(userLocation, newOrder, transportPrefs);
       setRoutePlan(plan);
       setFoundPOIs(plan.order);
       setMultiPlan(null);
@@ -711,29 +739,59 @@ export default function Home() {
           )}
 
           {/* 路线详情 */}
-          {activeTab === "route" && (
-            <RouteCard
-              planning={planning}
-              routePlan={routePlan}
-              multiPlan={multiPlan}
-              onPlanChange={handlePlanChange}
-              transportPrefs={prefsEffective}
-              onTransportPrefsChange={handleTransportPrefsChange}
-              animStatus={routeAnimation.animState.status}
-              animSegmentIndex={
-                routeAnimation.animState.status === "playing"
-                  ? routeAnimation.animState.currentSegmentIndex
-                  : hoveredSegment ?? undefined
+          {activeTab === "route" && routePlan && (
+            <BottomSheet
+              state={sheetState}
+              onStateChange={handleSheetChange}
+              collapsedContent={
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold">
+                      {routePlan.order.length} 个地点
+                    </span>
+                    <span className="text-xs text-muted">
+                      {Math.ceil(routePlan.totalDuration / 60)}分钟
+                    </span>
+                  </div>
+                  <span className="text-xs text-muted">
+                    {(routePlan.totalDistance / 1000).toFixed(1)}km
+                  </span>
+                </div>
               }
-              onPlay={routeAnimation.play}
-              onPause={routeAnimation.pause}
-              onReset={routeAnimation.reset}
-              onSave={handleSaveRoute}
-              saveDisabled={saveDisabled}
-              onRefreshStore={handleRefreshStore}
-              onMoveUp={handleMoveUp}
-              onMoveDown={handleMoveDown}
-            />
+              footer={
+                <button
+                  onClick={() => {
+                    const today = new Date().toISOString().slice(0, 10);
+                    handleSaveRoute(`${today} ${city.name}路线`);
+                  }}
+                  disabled={saveDisabled}
+                  className="w-full h-9 flex items-center justify-center gap-1.5 text-sm text-white bg-primary rounded-lg active:scale-[0.99] disabled:opacity-50"
+                >
+                  保存路线
+                </button>
+              }
+            >
+              <RouteCard
+                planning={planning}
+                routePlan={routePlan}
+                multiPlan={multiPlan}
+                onPlanChange={handlePlanChange}
+                transportPrefs={prefsEffective}
+                onTransportPrefsChange={handleTransportPrefsChange}
+                animStatus={routeAnimation.animState.status}
+                animSegmentIndex={
+                  routeAnimation.animState.status === "playing"
+                    ? routeAnimation.animState.currentSegmentIndex
+                    : hoveredSegment ?? undefined
+                }
+                onPlay={routeAnimation.play}
+                onPause={routeAnimation.pause}
+                onReset={routeAnimation.reset}
+                onRefreshStore={handleRefreshStore}
+                onMoveUp={handleMoveUp}
+                onMoveDown={handleMoveDown}
+              />
+            </BottomSheet>
           )}
 
           {/* 我的路线 */}
