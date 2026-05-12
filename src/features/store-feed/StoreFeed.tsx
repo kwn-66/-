@@ -15,8 +15,8 @@ function formatDistance(m: number | undefined): string {
   return `${(m / 1000).toFixed(1)}km`;
 }
 
-function openDianping(name: string) {
-  const url = `https://www.dianping.com/search/keyword/${encodeURIComponent(name)}`;
+function openExternalSearch(name: string) {
+  const url = `https://www.baidu.com/s?wd=${encodeURIComponent(name + " 大众点评")}`;
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
@@ -82,7 +82,7 @@ export default function StoreFeed({
                   className="text-sm font-medium truncate transition-all hover:text-primary hover:scale-[1.02] hover:brightness-110 cursor-pointer"
                   onClick={(e) => {
                     e.stopPropagation();
-                    openDianping(poi.name);
+                    openExternalSearch(poi.name);
                   }}
                 >
                   {poi.name}
