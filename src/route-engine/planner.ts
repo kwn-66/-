@@ -30,6 +30,28 @@ function extractPath(result: {
   }
 }
 
+/** 估算速度 (m/s)，用于 AMap 不可用时的 fallback */
+const SPEEDS: Record<string, number> = {
+  driving: 8,
+  bicycling: 3,
+  walking: 1.2,
+  subway: 7,
+  bus: 5,
+};
+
+function fallbackSegment(
+  from: [number, number],
+  to: [number, number],
+  mode: TravelMode
+): { distance: number; duration: number; path: [number, number][] } {
+  const dist = haversine(from[0], from[1], to[0], to[1]);
+  return {
+    distance: Math.round(dist),
+    duration: Math.round(dist / (SPEEDS[mode] || 5)),
+    path: [from, to],
+  };
+}
+
 /** 计算单段路线（非公交方式） */
 function calculateSegment(
   from: [number, number],
@@ -38,8 +60,7 @@ function calculateSegment(
 ): Promise<{ distance: number; duration: number; path: [number, number][] }> {
   return new Promise((resolve) => {
     if (!isAMapReady()) {
-      const dist = haversine(from[0], from[1], to[0], to[1]);
-      resolve({ distance: Math.round(dist), duration: 0, path: [from, to] });
+      resolve(fallbackSegment(from, to, mode));
       return;
     }
 
@@ -48,13 +69,16 @@ function calculateSegment(
 
       switch (mode) {
         case "walking":
+          if (!window.AMap.Walking) { resolve(fallbackSegment(from, to, mode)); return; }
           searcher = new window.AMap.Walking({ policy: 0 });
           break;
         case "bicycling":
+          if (!window.AMap.Riding) { resolve(fallbackSegment(from, to, mode)); return; }
           searcher = new window.AMap.Riding({ policy: 0 });
           break;
         case "driving":
         default:
+          if (!window.AMap.Driving) { resolve(fallbackSegment(from, to, mode)); return; }
           searcher = new window.AMap.Driving({ policy: 0, extensions: "base" });
           break;
       }
@@ -75,24 +99,11 @@ function calculateSegment(
             path: extractPath(result),
           });
         } else {
-          const dist = haversine(from[0], from[1], to[0], to[1]);
-          const speeds: Record<string, number> = {
-            driving: 8,
-            bicycling: 3,
-            walking: 1.2,
-            subway: 7,
-            bus: 5,
-          };
-          resolve({
-            distance: Math.round(dist),
-            duration: Math.round(dist / (speeds[mode] || 5)),
-            path: [from, to],
-          });
+          resolve(fallbackSegment(from, to, mode));
         }
       });
     } catch {
-      const dist = haversine(from[0], from[1], to[0], to[1]);
-      resolve({ distance: Math.round(dist), duration: 0, path: [from, to] });
+      resolve(fallbackSegment(from, to, mode));
     }
   });
 }
@@ -111,22 +122,13 @@ function calculateTransitSegments(
   to: [number, number],
   fromName: string,
   toName: string,
+  preferredMode: TravelMode,
   poiCategoryIcon?: string,
   poiCategoryName?: string
 ): Promise<RouteSegment[]> {
   return new Promise((resolve) => {
     if (!isAMapReady() || !window.AMap.Transfer) {
-      const dist = haversine(from[0], from[1], to[0], to[1]);
-      resolve([
-        {
-          from: { name: fromName, location: from },
-          to: { name: toName, location: to, categoryIcon: poiCategoryIcon, categoryName: poiCategoryName },
-          distance: Math.round(dist),
-          duration: Math.round(dist / 5),
-          mode: "bus",
-          path: [from, to],
-        },
-      ]);
+      resolve(fallbackTransitSegment(from, to, fromName, toName, preferredMode, poiCategoryIcon, poiCategoryName));
       return;
     }
 
@@ -174,13 +176,13 @@ function calculateTransitSegments(
             prevLoc = nextLoc;
           }
 
-          resolve(segments.length > 0 ? segments : fallbackTransitSegment(from, to, fromName, toName, poiCategoryIcon, poiCategoryName));
+          resolve(segments.length > 0 ? segments : fallbackTransitSegment(from, to, fromName, toName, preferredMode, poiCategoryIcon, poiCategoryName));
         } else {
-          resolve(fallbackTransitSegment(from, to, fromName, toName, poiCategoryIcon, poiCategoryName));
+          resolve(fallbackTransitSegment(from, to, fromName, toName, preferredMode, poiCategoryIcon, poiCategoryName));
         }
       });
     } catch {
-      resolve(fallbackTransitSegment(from, to, fromName, toName, poiCategoryIcon, poiCategoryName));
+      resolve(fallbackTransitSegment(from, to, fromName, toName, preferredMode, poiCategoryIcon, poiCategoryName));
     }
   });
 }
@@ -190,6 +192,7 @@ function fallbackTransitSegment(
   to: [number, number],
   fromName: string,
   toName: string,
+  mode: TravelMode,
   poiCategoryIcon?: string,
   poiCategoryName?: string
 ): RouteSegment[] {
@@ -199,8 +202,8 @@ function fallbackTransitSegment(
       from: { name: fromName, location: from },
       to: { name: toName, location: to, categoryIcon: poiCategoryIcon, categoryName: poiCategoryName },
       distance: Math.round(dist),
-      duration: Math.round(dist / 5),
-      mode: "bus",
+      duration: Math.round(dist / (SPEEDS[mode] || 5)),
+      mode,
       path: [from, to],
     },
   ];
@@ -337,6 +340,7 @@ export async function buildPlanFromOrder(
         poi.location,
         prevName,
         poi.name,
+        bestMode,
         poi.categoryIcon,
         poi.categoryName
       );

@@ -1,30 +1,47 @@
 import type { TravelMode, TransportPrefs } from "@/types";
 
-const WALK_MAX = 1000;
-const BIKE_MAX = 5000;
-const BIKE_OPTIMAL = 3000;
-const TRANSIT_MIN = 2000;
-
+/**
+ * 根据距离和用户偏好智能决定出行方式。
+ *
+ * 每个距离段有优先级：
+ * - 0~800m：步行 > 骑行 > 驾车 > 地铁 > 公交
+ * - 800m~3km：骑行 > 驾车 > 地铁 > 公交 > 步行
+ * - 3km~15km：驾车 > 地铁 > 公交 > 骑行 > 步行
+ * - 15km+：地铁 > 公交 > 驾车 > 骑行 > 步行
+ *
+ * 只从用户勾选的方式中选取，未勾选的跳过。
+ */
 export function decideBestMode(
   distanceMeters: number,
   prefs: TransportPrefs
 ): TravelMode {
   const { walking, bicycling, driving, subway, bus } = prefs;
-  const transitOk = subway || bus;
 
-  if (distanceMeters <= 800 && walking) return "walking";
-  if (distanceMeters <= BIKE_OPTIMAL && bicycling) return "bicycling";
-  if (distanceMeters >= TRANSIT_MIN && transitOk) return subway ? "subway" : "bus";
-  if (driving) return "driving";
-
-  if (distanceMeters <= WALK_MAX && walking) return "walking";
-  if (distanceMeters <= BIKE_MAX && bicycling) return "bicycling";
-  if (subway) return "subway";
-  if (bus) return "bus";
-  if (driving) return "driving";
-
-  if (bicycling) return "bicycling";
-  if (walking) return "walking";
+  if (distanceMeters <= 800) {
+    if (walking) return "walking";
+    if (bicycling) return "bicycling";
+    if (driving) return "driving";
+    if (subway) return "subway";
+    if (bus) return "bus";
+  } else if (distanceMeters <= 3000) {
+    if (bicycling) return "bicycling";
+    if (driving) return "driving";
+    if (subway) return "subway";
+    if (bus) return "bus";
+    if (walking) return "walking";
+  } else if (distanceMeters <= 15000) {
+    if (driving) return "driving";
+    if (subway) return "subway";
+    if (bus) return "bus";
+    if (bicycling) return "bicycling";
+    if (walking) return "walking";
+  } else {
+    if (subway) return "subway";
+    if (bus) return "bus";
+    if (driving) return "driving";
+    if (bicycling) return "bicycling";
+    if (walking) return "walking";
+  }
 
   return "driving";
 }

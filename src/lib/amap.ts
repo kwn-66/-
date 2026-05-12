@@ -6,6 +6,7 @@ const AMAP_PLUGINS = [
   "AMap.Driving",
   "AMap.Walking",
   "AMap.Riding",
+  "AMap.Transfer",
   "AMap.Marker",
   "AMap.Polyline",
   "AMap.InfoWindow",
