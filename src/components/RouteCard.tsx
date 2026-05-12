@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useCallback } from "react";
 import type { RoutePlan, TransportPrefs, AnimationStatus } from "@/types";
 import { modeLabel, modeColor } from "@/route-engine/mode-decider";
 import TransportCheckboxes from "@/ui/TransportCheckboxes";
@@ -30,6 +31,8 @@ interface RouteCardProps {
   onPlay?: () => void;
   onPause?: () => void;
   onReset?: () => void;
+  onSave?: (title: string) => void;
+  saveDisabled?: boolean;
 }
 
 export default function RouteCard({
@@ -42,7 +45,38 @@ export default function RouteCard({
   onPlay,
   onPause,
   onReset,
+  onSave,
+  saveDisabled,
 }: RouteCardProps) {
+  const [showSaveInput, setShowSaveInput] = useState(false);
+  const [saveTitle, setSaveTitle] = useState("");
+
+  const handleSave = useCallback(() => {
+    if (!onSave) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const title = saveTitle.trim() || `${today} 成都路线`;
+    onSave(title);
+    setSaveTitle("");
+    setShowSaveInput(false);
+  }, [onSave, saveTitle]);
+
+  const handleSaveClick = useCallback(() => {
+    if (saveDisabled) return;
+    const today = new Date().toISOString().slice(0, 10);
+    setSaveTitle(`${today} 成都路线`);
+    setShowSaveInput(true);
+  }, [saveDisabled]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter") handleSave();
+      if (e.key === "Escape") {
+        setShowSaveInput(false);
+        setSaveTitle("");
+      }
+    },
+    [handleSave]
+  );
   if (planning) {
     return (
       <div className="p-4 shrink-0">
@@ -198,6 +232,51 @@ export default function RouteCard({
             })}
           </div>
         </div>
+
+        {/* 保存路线 */}
+        {onSave && (
+          <div className="px-4 py-3 border-t border-border">
+            {showSaveInput ? (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={saveTitle}
+                  onChange={(e) => setSaveTitle(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="输入路线名称"
+                  autoFocus
+                  className="flex-1 h-9 px-3 text-sm bg-secondary rounded-lg outline-none focus:ring-2 focus:ring-primary/20"
+                />
+                <button
+                  onClick={handleSave}
+                  className="shrink-0 h-9 px-4 bg-primary text-white text-xs rounded-lg active:scale-95 transition-all"
+                >
+                  保存
+                </button>
+                <button
+                  onClick={() => {
+                    setShowSaveInput(false);
+                    setSaveTitle("");
+                  }}
+                  className="shrink-0 h-9 w-9 flex items-center justify-center text-muted text-xs rounded-lg hover:bg-secondary"
+                >
+                  ✕
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleSaveClick}
+                disabled={saveDisabled}
+                className="w-full h-9 flex items-center justify-center gap-1.5 text-sm text-primary border border-primary/30 rounded-lg hover:bg-primary-light transition-colors active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" />
+                </svg>
+                保存路线
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

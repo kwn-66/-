@@ -74,3 +74,35 @@ export interface AnimationState {
   /** 当前动画进度 0-1 */
   progress: number;
 }
+
+/** 成都区域 */
+export interface District {
+  code: string;
+  name: string;
+  center: [number, number];
+  zoom: number;
+}
+
+/** 分类 */
+export interface Category {
+  id: string;
+  name: string;
+  icon: string;
+  type: "food" | "entertainment";
+  keyword: string;
+}
+
+/** 已保存的路线 */
+export interface SavedRoute {
+  id: string;
+  title: string;
+  createdAt: string;
+  city: string;
+  districts: string[];
+  categories: string[];
+  stores: POIResult[];
+  plan: RoutePlan;
+}
+
+/** 底部面板 Tab 类型 */
+export type PanelTab = "manual" | "discover" | "route" | "saved";

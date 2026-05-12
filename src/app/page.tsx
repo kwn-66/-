@@ -4,23 +4,31 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import AMapContainer from "@/components/AMapContainer";
 import ShopInput from "@/components/ShopInput";
 import RouteCard from "@/components/RouteCard";
+import DistrictFilter from "@/features/district/DistrictFilter";
+import CategoryCards from "@/features/category/CategoryCards";
+import StoreFeed from "@/features/store-feed/StoreFeed";
+import RoutePool from "@/features/route-pool/RoutePool";
+import SavedRoutes from "@/features/saved-routes/SavedRoutes";
 import { useGeolocation } from "@/hooks/useGeolocation";
 import { useMarkers } from "@/hooks/useMarkers";
 import { useRouteLine } from "@/hooks/useRouteLine";
 import { useRouteAnimation } from "@/hooks/useRouteAnimation";
-import { searchAllShops } from "@/services/poi";
+import { searchAllShops, searchMultiCategories } from "@/services/poi";
 import { planSmartRoute } from "@/route-engine/planner";
+import { saveRoute as persistRoute } from "@/features/saved-routes/storage";
+import { CHENGDU_DISTRICTS, CHENGDU_CATEGORIES } from "@/config/chengdu";
 import type {
   UserLocation,
   ShopInput as ShopInputType,
   RoutePlan,
   TransportPrefs,
   POIResult,
+  PanelTab,
+  SavedRoute,
 } from "@/types";
 
 const CHENGDU_CENTER: [number, number] = [104.0657, 30.6573];
 
-/** 默认交通偏好：全部开启（系统智能选择） */
 const DEFAULT_PREFS: TransportPrefs = {
   walking: true,
   bicycling: true,
@@ -35,6 +43,10 @@ export default function Home() {
   const routeAnimation = useRouteAnimation();
   const userMarkerRef = useRef<AMap.Marker | null>(null);
 
+  // ---- Tab 状态 ----
+  const [activeTab, setActiveTab] = useState<PanelTab>("manual");
+
+  // ---- 手动输入 ----
   const [shops, setShops] = useState<ShopInputType[]>([
     { id: "shop_initial", name: "" },
   ]);
@@ -45,17 +57,30 @@ export default function Home() {
   const [transportPrefs, setTransportPrefs] = useState<TransportPrefs>(DEFAULT_PREFS);
   const [hoveredSegment, setHoveredSegment] = useState<number | null>(null);
 
-  // 动画时禁用交通方式切换
-  const prefsEffective = useMemo(() => {
-    if (routeAnimation.animState.status === "playing") return transportPrefs;
-    return transportPrefs;
-  }, [transportPrefs, routeAnimation.animState.status]);
+  // ---- 浏览发现 ----
+  const [selectedDistricts, setSelectedDistricts] = useState<string[]>(["all"]);
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [feedPOIs, setFeedPOIs] = useState<POIResult[]>([]);
+  const [feedLoading, setFeedLoading] = useState(false);
+  const [routePool, setRoutePool] = useState<POIResult[]>([]);
 
-  // 页面加载后自动定位
+  // ---- 我的路线 ----
+  const [savedRoutesKey, setSavedRoutesKey] = useState(0);
+
+  // ---- 保存路线 ----
+  const [saveDisabled, setSaveDisabled] = useState(false);
+
+  // 动画禁用交通切换
+  const prefsEffective = useMemo(() => {
+    return transportPrefs;
+  }, [transportPrefs]);
+
+  // ---- 页面加载自动定位 ----
   useEffect(() => {
     getUserLocation().then(setUserLocation);
   }, [getUserLocation]);
 
+  // ---- 地图就绪 ----
   const handleMapReady = useCallback((mapInstance: AMap.Map) => {
     setMap(mapInstance);
     if (!window.AMap) return;
@@ -98,8 +123,102 @@ export default function Home() {
     moveToUserLocation(loc);
   }, [getUserLocation, moveToUserLocation]);
 
-  /** 规划路线 */
-  const handlePlanRoute = useCallback(async () => {
+  // ---- 区域切换 → 聚焦地图 ----
+  const handleDistrictChange = useCallback(
+    (codes: string[]) => {
+      setSelectedDistricts(codes);
+      if (map) {
+        const dist = CHENGDU_DISTRICTS.find((d) => d.code === codes[0]);
+        if (dist) {
+          map.setCenter(dist.center);
+          map.setZoom(dist.zoom);
+        }
+      }
+    },
+    [map]
+  );
+
+  // ---- 分类区域变化 → 搜索 POI ----
+  useEffect(() => {
+    if (activeTab !== "discover") return;
+    if (selectedCategories.length === 0) {
+      setFeedPOIs([]);
+      return;
+    }
+
+    let cancelled = false;
+    setFeedLoading(true);
+
+    const district = selectedDistricts[0];
+    const districtName =
+      district && district !== "all"
+        ? CHENGDU_DISTRICTS.find((d) => d.code === district)?.name
+        : undefined;
+
+    const keywords = selectedCategories
+      .map((id) => CHENGDU_CATEGORIES.find((c) => c.id === id)?.keyword)
+      .filter(Boolean) as string[];
+
+    searchMultiCategories(keywords, districtName).then((pois) => {
+      if (cancelled) return;
+      setFeedPOIs(pois);
+      setFeedLoading(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCategories, selectedDistricts, activeTab]);
+
+  // ---- 路线池操作 ----
+  const handleTogglePool = useCallback((poi: POIResult) => {
+    setRoutePool((prev) => {
+      const exists = prev.find((p) => p.id === poi.id);
+      if (exists) return prev.filter((p) => p.id !== poi.id);
+      return [...prev, poi];
+    });
+  }, []);
+
+  const handleRemoveFromPool = useCallback((id: string) => {
+    setRoutePool((prev) => prev.filter((p) => p.id !== id));
+  }, []);
+
+  // ---- 通用路线规划 ----
+  const doPlanRoute = useCallback(
+    async (pois: POIResult[]) => {
+      setPlanning(true);
+      clearMarkers();
+      clearLines();
+      routeAnimation.cleanup();
+      setRoutePlan(null);
+
+      if (pois.length === 0) {
+        setPlanning(false);
+        return;
+      }
+
+      // 路线优化
+      const plan = await planSmartRoute(userLocation, pois, transportPrefs);
+
+      setFoundPOIs(plan.order);
+      setRoutePlan(plan);
+
+      // 地图显示
+      if (map) showMarkers(map, plan.order);
+      if (map) drawRoute(map, plan);
+      if (map) routeAnimation.init(map, plan);
+
+      setPlanning(false);
+      setActiveTab("route");
+    },
+    [
+      userLocation, transportPrefs, map,
+      showMarkers, clearMarkers, clearLines, drawRoute, routeAnimation,
+    ]
+  );
+
+  // ---- 手动输入：搜索并规划 ----
+  const handleManualPlan = useCallback(async () => {
     const validShops = shops.filter((s) => s.name.trim());
     if (validShops.length === 0) return;
 
@@ -114,17 +233,13 @@ export default function Home() {
       prev.map((s) => (s.name.trim() ? { ...s, loading: true } : s))
     );
 
-    // POI 搜索
     const results = await searchAllShops(validShops);
     setShops(results);
 
     const pois = results
       .filter(
-        (
-          s
-        ): s is ShopInputType & {
-          poi: NonNullable<ShopInputType["poi"]>;
-        } => !!s.poi
+        (s): s is ShopInputType & { poi: NonNullable<ShopInputType["poi"]> } =>
+          !!s.poi
       )
       .map((s) => s.poi);
 
@@ -133,30 +248,23 @@ export default function Home() {
       return;
     }
 
-    // 智能混合路线规划
-    const plan = await planSmartRoute(userLocation, pois, transportPrefs);
+    await doPlanRoute(pois);
+  }, [shops, map, userLocation, transportPrefs, clearMarkers, clearLines, drawRoute, routeAnimation, doPlanRoute]);
 
-    // 用优化后的 order 更新 POI（确保 Marker 编号同步）
-    setFoundPOIs(plan.order);
-    setRoutePlan(plan);
+  // ---- 浏览发现：路线池规划 ----
+  const handlePoolPlan = useCallback(async () => {
+    if (routePool.length < 2) return;
+    await doPlanRoute(routePool);
+  }, [routePool, doPlanRoute]);
 
-    // 按优化顺序显示 Marker
-    if (map) showMarkers(map, plan.order);
+  // ---- AI 推荐：自动选评分最高的3家 ----
+  const handleAutoRecommend = useCallback(async () => {
+    const top3 = feedPOIs.slice(0, 3);
+    setRoutePool(top3);
+    await doPlanRoute(top3);
+  }, [feedPOIs, doPlanRoute]);
 
-    // 绘制路线
-    if (map) drawRoute(map, plan);
-
-    // 初始化动画
-    if (map) routeAnimation.init(map, plan);
-
-    setPlanning(false);
-  }, [
-    shops, map, userLocation, transportPrefs,
-    showMarkers, clearMarkers, clearLines, drawRoute,
-    routeAnimation,
-  ]);
-
-  /** 交通偏好变化时重新规划 */
+  // ---- 交通偏好变化 ----
   const handleTransportPrefsChange = useCallback(
     async (prefs: TransportPrefs) => {
       setTransportPrefs(prefs);
@@ -177,7 +285,44 @@ export default function Home() {
     [foundPOIs, userLocation, map, clearLines, drawRoute, routeAnimation]
   );
 
-  // 路线 hover 回传
+  // ---- 保存路线 ----
+  const handleSaveRoute = useCallback(
+    (title: string) => {
+      if (!routePlan || foundPOIs.length === 0) return;
+      const saved: SavedRoute = {
+        id: `route_${Date.now()}`,
+        title,
+        createdAt: new Date().toISOString(),
+        city: "成都",
+        districts: selectedDistricts,
+        categories: selectedCategories,
+        stores: foundPOIs,
+        plan: routePlan,
+      };
+      persistRoute(saved);
+      setSaveDisabled(true);
+      setTimeout(() => setSaveDisabled(false), 2000);
+    },
+    [routePlan, foundPOIs, selectedDistricts, selectedCategories]
+  );
+
+  // ---- 查看已保存路线 ----
+  const handleViewSaved = useCallback(
+    (route: SavedRoute) => {
+      setFoundPOIs(route.stores);
+      setRoutePlan(route.plan);
+      setTransportPrefs(DEFAULT_PREFS);
+      if (map) {
+        showMarkers(map, route.stores);
+        drawRoute(map, route.plan);
+        routeAnimation.init(map, route.plan);
+      }
+      setActiveTab("route");
+    },
+    [map, showMarkers, drawRoute, routeAnimation]
+  );
+
+  // ---- 路线 hover ----
   useEffect(() => {
     setOnHover((idx: number | null) => setHoveredSegment(idx));
   }, [setOnHover]);
@@ -214,30 +359,115 @@ export default function Home() {
         </div>
       )}
 
-      {/* 店铺输入 */}
-      <ShopInput shops={shops} onShopsChange={setShops} onPlanRoute={handlePlanRoute} />
-
       {/* 地图 */}
       <div className="flex-1 min-h-0 mx-4 rounded-xl overflow-hidden shadow-md">
         <AMapContainer onMapReady={handleMapReady} />
       </div>
 
-      {/* 底部路线详情 */}
-      <RouteCard
-        planning={planning}
-        routePlan={routePlan}
-        transportPrefs={prefsEffective}
-        onTransportPrefsChange={handleTransportPrefsChange}
-        animStatus={routeAnimation.animState.status}
-        animSegmentIndex={
-          routeAnimation.animState.status === "playing"
-            ? routeAnimation.animState.currentSegmentIndex
-            : hoveredSegment ?? undefined
-        }
-        onPlay={routeAnimation.play}
-        onPause={routeAnimation.pause}
-        onReset={routeAnimation.reset}
-      />
+      {/* 底部面板 */}
+      <div className="shrink-0">
+        {/* Tab 按钮 */}
+        <div className="flex px-4 pt-2 pb-1">
+          {([
+            ["manual", "手动输入"],
+            ["discover", "浏览发现"],
+            ["route", "路线详情"],
+            ["saved", "我的路线"],
+          ] as [PanelTab, string][]).map(([tab, label]) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`flex-1 py-2 text-xs font-medium border-b-2 transition-colors ${
+                activeTab === tab
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* 面板内容 */}
+        <div className="px-4 pb-4">
+          {/* 手动输入 */}
+          {activeTab === "manual" && (
+            <ShopInput
+              shops={shops}
+              onShopsChange={setShops}
+              onPlanRoute={handleManualPlan}
+            />
+          )}
+
+          {/* 浏览发现 */}
+          {activeTab === "discover" && (
+            <div className="space-y-3">
+              <DistrictFilter
+                districts={CHENGDU_DISTRICTS}
+                selected={selectedDistricts}
+                onChange={handleDistrictChange}
+              />
+              <CategoryCards
+                categories={CHENGDU_CATEGORIES}
+                selected={selectedCategories}
+                onChange={setSelectedCategories}
+              />
+              {selectedCategories.length > 0 && (
+                <StoreFeed
+                  pois={feedPOIs}
+                  selected={routePool}
+                  loading={feedLoading}
+                  onToggle={handleTogglePool}
+                />
+              )}
+              {feedPOIs.length > 0 && routePool.length === 0 && (
+                <button
+                  onClick={handleAutoRecommend}
+                  disabled={planning}
+                  className="w-full h-10 flex items-center justify-center gap-2 text-sm text-primary border border-dashed border-primary/40 rounded-xl hover:bg-primary-light transition-colors active:scale-[0.99] disabled:opacity-50"
+                >
+                  🤖 帮我推荐3家
+                </button>
+              )}
+              <RoutePool
+                stores={routePool}
+                onRemove={handleRemoveFromPool}
+                onPlanRoute={handlePoolPlan}
+                planning={planning}
+              />
+            </div>
+          )}
+
+          {/* 路线详情 */}
+          {activeTab === "route" && (
+            <RouteCard
+              planning={planning}
+              routePlan={routePlan}
+              transportPrefs={prefsEffective}
+              onTransportPrefsChange={handleTransportPrefsChange}
+              animStatus={routeAnimation.animState.status}
+              animSegmentIndex={
+                routeAnimation.animState.status === "playing"
+                  ? routeAnimation.animState.currentSegmentIndex
+                  : hoveredSegment ?? undefined
+              }
+              onPlay={routeAnimation.play}
+              onPause={routeAnimation.pause}
+              onReset={routeAnimation.reset}
+              onSave={handleSaveRoute}
+              saveDisabled={saveDisabled}
+            />
+          )}
+
+          {/* 我的路线 */}
+          {activeTab === "saved" && (
+            <SavedRoutes
+              key={savedRoutesKey}
+              onViewRoute={handleViewSaved}
+            />
+          )}
+        </div>
+      </div>
     </div>
   );
 }

@@ -3,9 +3,21 @@ import { isAMapReady } from "@/lib/amap";
 
 const SEARCH_CITY = "成都";
 const PAGE_SIZE = 5;
+const DISCOVER_PAGE_SIZE = 15;
 
 /** 搜索成都范围内的 POI */
 export function searchPOI(keyword: string): Promise<POIResult[]> {
+  return searchPOIWithOptions(keyword, { pageSize: PAGE_SIZE });
+}
+
+/** 扩展搜索 */
+export function searchPOIWithOptions(
+  keyword: string,
+  options?: {
+    pageSize?: number;
+    district?: string;
+  }
+): Promise<POIResult[]> {
   return new Promise((resolve, reject) => {
     if (!isAMapReady()) {
       reject(new Error("地图 SDK 未就绪"));
@@ -13,36 +25,75 @@ export function searchPOI(keyword: string): Promise<POIResult[]> {
     }
 
     try {
-      const placeSearch = new window.AMap.PlaceSearch({
+      const searchOptions: AMap.PlaceSearchOptions = {
         city: SEARCH_CITY,
         citylimit: true,
-        pageSize: PAGE_SIZE,
+        pageSize: options?.pageSize ?? PAGE_SIZE,
         pageIndex: 1,
-      });
+      };
 
-      placeSearch.search(keyword, (status: string, result: AMap.PlaceSearchResult) => {
-        if (status === "complete" && result.poiList?.pois) {
-          const results: POIResult[] = result.poiList.pois.map(
-            (poi: AMap.POI) => ({
-              id: poi.id,
-              name: poi.name,
-              address: poi.address || "",
-              location: [poi.location.lng, poi.location.lat] as [
-                number,
-                number,
-              ],
-              city: poi.cityname,
-              distance: poi.distance,
-            })
-          );
-          resolve(results);
-        } else {
-          resolve([]);
+      // 区域筛选：在搜索关键词前加区域名
+      let searchKeyword = keyword;
+      if (options?.district && options.district !== "全部成都") {
+        searchKeyword = `${options.district} ${keyword}`;
+      }
+
+      const placeSearch = new window.AMap.PlaceSearch(searchOptions);
+
+      placeSearch.search(
+        searchKeyword,
+        (status: string, result: AMap.PlaceSearchResult) => {
+          if (status === "complete" && result.poiList?.pois) {
+            const results: POIResult[] = result.poiList.pois.map(
+              (poi: AMap.POI) => ({
+                id: poi.id,
+                name: poi.name,
+                address: poi.address || "",
+                location: [poi.location.lng, poi.location.lat] as [
+                  number,
+                  number,
+                ],
+                city: poi.cityname,
+                distance: poi.distance,
+              })
+            );
+            resolve(results);
+          } else {
+            resolve([]);
+          }
         }
-      });
+      );
     } catch (err) {
       reject(err);
     }
+  });
+}
+
+/** 按分类搜索店铺（浏览发现模式） */
+export async function searchByCategory(
+  keyword: string,
+  district?: string
+): Promise<POIResult[]> {
+  return searchPOIWithOptions(keyword, {
+    pageSize: DISCOVER_PAGE_SIZE,
+    district,
+  });
+}
+
+/** 按多个分类批量搜索并去重 */
+export async function searchMultiCategories(
+  keywords: string[],
+  district?: string
+): Promise<POIResult[]> {
+  const allResults = await Promise.all(
+    keywords.map((kw) => searchByCategory(kw, district))
+  );
+  // 去重
+  const seen = new Set<string>();
+  return allResults.flat().filter((poi) => {
+    if (seen.has(poi.id)) return false;
+    seen.add(poi.id);
+    return true;
   });
 }
 
@@ -60,7 +111,6 @@ export async function searchAllShops(
         const chengduPois = pois.filter(
           (poi) => poi.city === "成都市" || poi.city === "成都"
         );
-        // 优先匹配成都本地结果，没有则用第一个结果
         return {
           ...shop,
           poi: chengduPois[0] || pois[0] || null,

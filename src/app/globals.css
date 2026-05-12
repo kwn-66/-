@@ -20,3 +20,12 @@ body {
   color: var(--color-foreground);
   font-family: var(--font-sans);
 }
+
+/* 隐藏横向滚动条 */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
