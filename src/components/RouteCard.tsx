@@ -213,10 +213,17 @@ export default function RouteCard({
                   </div>
                   {/* 路线信息 */}
                   <div className="flex-1 min-w-0 pb-1">
-                    <p className="text-sm leading-tight flex items-center gap-1.5">
+                    <p className="text-sm leading-tight flex items-center gap-1.5 flex-wrap">
                       <span className="text-muted">{seg.from.name}</span>
                       <span className="text-border">→</span>
-                      <span className="font-medium">{seg.to.name}</span>
+                      <span className="font-medium flex items-center gap-1">
+                        {seg.to.name}
+                        {seg.to.categoryIcon && (
+                          <span className="text-xs" title={seg.to.categoryName}>
+                            {seg.to.categoryIcon}
+                          </span>
+                        )}
+                      </span>
                       {onRefreshStore && (
                         <button
                           onClick={(e) => {

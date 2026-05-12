@@ -13,7 +13,7 @@ import { useGeolocation } from "@/hooks/useGeolocation";
 import { useMarkers } from "@/hooks/useMarkers";
 import { useRouteLine } from "@/hooks/useRouteLine";
 import { useRouteAnimation } from "@/hooks/useRouteAnimation";
-import { searchAllShops, searchMultiCategories } from "@/services/poi";
+import { searchAllShops, searchMultiCategories, searchGroupedByCategory } from "@/services/poi";
 import { planSmartRoute } from "@/route-engine/planner";
 import { saveRoute as persistRoute } from "@/features/saved-routes/storage";
 import { getAllCities } from "@/cities/registry";
@@ -26,6 +26,7 @@ import type {
   PanelTab,
   SavedRoute,
   CityConfig,
+  CategoryGroup,
 } from "@/types";
 
 const DEFAULT_PREFS: TransportPrefs = {
@@ -60,7 +61,7 @@ export default function Home() {
   // ---- 浏览发现 ----
   const [selectedDistricts, setSelectedDistricts] = useState<string[]>(["all"]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
-  const [feedPOIs, setFeedPOIs] = useState<POIResult[]>([]);
+  const [feedGroups, setFeedGroups] = useState<CategoryGroup[]>([]);
   const [feedLoading, setFeedLoading] = useState(false);
   const [routePool, setRoutePool] = useState<POIResult[]>([]);
   const [aiStoreCount, setAiStoreCount] = useState(5);
@@ -88,7 +89,7 @@ export default function Home() {
     setShowCityPicker(false);
     setSelectedDistricts(["all"]);
     setSelectedCategories([]);
-    setFeedPOIs([]);
+    setFeedGroups([]);
     setRoutePool([]);
     setRoutePlan(null);
     setFoundPOIs([]);
@@ -168,7 +169,7 @@ export default function Home() {
   useEffect(() => {
     if (activeTab !== "discover") return;
     if (selectedCategories.length === 0) {
-      setFeedPOIs([]);
+      setFeedGroups([]);
       return;
     }
 
@@ -181,20 +182,20 @@ export default function Home() {
         ? city.districts.find((d) => d.code === district)?.name
         : undefined;
 
-    const keywords = selectedCategories
-      .map((id) => city.categories.find((c) => c.id === id)?.keyword)
-      .filter(Boolean) as string[];
+    const cats = selectedCategories
+      .map((id) => city.categories.find((c) => c.id === id))
+      .filter(Boolean) as typeof city.categories;
 
-    searchMultiCategories(keywords, city.name, districtName).then((pois) => {
+    searchGroupedByCategory(cats, city.name, districtName).then((groups) => {
       if (cancelled) return;
-      setFeedPOIs(pois);
+      setFeedGroups(groups);
       setFeedLoading(false);
     });
 
     return () => {
       cancelled = true;
     };
-  }, [selectedCategories, selectedDistricts, activeTab]);
+  }, [selectedCategories, selectedDistricts, activeTab, city]);
 
   // ---- 路线池操作 ----
   const handleTogglePool = useCallback((poi: POIResult) => {
@@ -286,17 +287,14 @@ export default function Home() {
   // ---- AI 推荐：分类去重 + 店铺数量选择器 ----
   const handleAutoRecommend = useCallback(async () => {
     const count = Math.max(2, Math.min(10, aiStoreCount));
-    if (feedPOIs.length === 0) return;
+    if (feedGroups.length === 0) return;
 
-    // 按分类分组，确保每个分类至少入选1家
-    const catCount = selectedCategories.length;
     const picked: POIResult[] = [];
     const usedIds = new Set<string>();
-    const allPois = [...feedPOIs];
 
     // 第一轮：每个分类至少选1家
-    for (let i = 0; i < catCount; i++) {
-      const match = allPois.find((p) => !usedIds.has(p.id));
+    for (const group of feedGroups) {
+      const match = group.pois.find((p) => !usedIds.has(p.id));
       if (match) {
         picked.push(match);
         usedIds.add(match.id);
@@ -304,6 +302,7 @@ export default function Home() {
     }
 
     // 第二轮：剩余名额从余下的店中补齐
+    const allPois = feedGroups.flatMap((g) => g.pois);
     for (let i = picked.length; i < count; i++) {
       const next = allPois.find((p) => !usedIds.has(p.id));
       if (next) {
@@ -315,7 +314,7 @@ export default function Home() {
     if (picked.length < 2) return;
     setRoutePool(picked);
     await doPlanRoute(picked);
-  }, [feedPOIs, doPlanRoute, aiStoreCount, selectedCategories, city]);
+  }, [feedGroups, doPlanRoute, aiStoreCount]);
 
   // ---- 单店刷新：同分类替换 ----
   const handleRefreshStore = useCallback(
@@ -540,13 +539,13 @@ export default function Home() {
               />
               {selectedCategories.length > 0 && (
                 <StoreFeed
-                  pois={feedPOIs}
+                  groups={feedGroups}
                   selected={routePool}
                   loading={feedLoading}
                   onToggle={handleTogglePool}
                 />
               )}
-              {feedPOIs.length > 0 && routePool.length === 0 && (
+              {feedGroups.length > 0 && routePool.length === 0 && (
                 <div className="space-y-2">
                   {/* 店铺数量选择器 */}
                   <div className="flex items-center justify-between">

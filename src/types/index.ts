@@ -6,6 +6,20 @@ export interface POIResult {
   location: [number, number]; // [lng, lat]
   city?: string;
   distance?: number;
+  /** 所属分类 ID（浏览发现模式） */
+  categoryId?: string;
+  /** 所属分类名称 */
+  categoryName?: string;
+  /** 所属分类图标 */
+  categoryIcon?: string;
+}
+
+/** 按分类分组的结果 */
+export interface CategoryGroup {
+  categoryId: string;
+  categoryName: string;
+  icon: string;
+  pois: POIResult[];
 }
 
 /** 店铺输入项 */
@@ -38,10 +52,14 @@ export interface RouteSegment {
   from: {
     name: string;
     location: [number, number];
+    categoryIcon?: string;
+    categoryName?: string;
   };
   to: {
     name: string;
     location: [number, number];
+    categoryIcon?: string;
+    categoryName?: string;
   };
   distance: number;
   duration: number;

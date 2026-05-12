@@ -1,4 +1,5 @@
-import type { POIResult, ShopInput } from "@/types";
+import type { POIResult, ShopInput, CategoryGroup } from "@/types";
+import type { Category } from "@/types";
 import { isAMapReady } from "@/lib/amap";
 
 const PAGE_SIZE = 5;
@@ -99,6 +100,33 @@ export async function searchMultiCategories(
     seen.add(poi.id);
     return true;
   });
+}
+
+/** 按分类独立搜索并分组（修复核心） */
+export async function searchGroupedByCategory(
+  categories: Category[],
+  city?: string,
+  district?: string
+): Promise<CategoryGroup[]> {
+  const groups = await Promise.all(
+    categories.map(async (cat) => {
+      const pois = await searchByCategory(cat.keyword, city, district);
+      // 给每个 POI 打上分类标签
+      const tagged = pois.map((poi) => ({
+        ...poi,
+        categoryId: cat.id,
+        categoryName: cat.name,
+        categoryIcon: cat.icon,
+      }));
+      return {
+        categoryId: cat.id,
+        categoryName: cat.name,
+        icon: cat.icon,
+        pois: tagged,
+      };
+    })
+  );
+  return groups;
 }
 
 /** 批量搜索店铺，返回每个店铺的 POI 匹配结果 */

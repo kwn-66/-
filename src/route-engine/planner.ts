@@ -140,7 +140,12 @@ export async function planSmartRoute(
 
     segments.push({
       from: { name: prevName, location: prevPoint },
-      to: { name: poi.name, location: poi.location },
+      to: {
+        name: poi.name,
+        location: poi.location,
+        categoryIcon: poi.categoryIcon,
+        categoryName: poi.categoryName,
+      },
       distance,
       duration,
       mode: bestMode,
