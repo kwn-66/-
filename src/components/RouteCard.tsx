@@ -33,6 +33,7 @@ interface RouteCardProps {
   onReset?: () => void;
   onSave?: (title: string) => void;
   saveDisabled?: boolean;
+  onRefreshStore?: (index: number) => void;
 }
 
 export default function RouteCard({
@@ -47,6 +48,7 @@ export default function RouteCard({
   onReset,
   onSave,
   saveDisabled,
+  onRefreshStore,
 }: RouteCardProps) {
   const [showSaveInput, setShowSaveInput] = useState(false);
   const [saveTitle, setSaveTitle] = useState("");
@@ -211,10 +213,25 @@ export default function RouteCard({
                   </div>
                   {/* 路线信息 */}
                   <div className="flex-1 min-w-0 pb-1">
-                    <p className="text-sm leading-tight">
+                    <p className="text-sm leading-tight flex items-center gap-1.5">
                       <span className="text-muted">{seg.from.name}</span>
-                      <span className="mx-1 text-border">→</span>
+                      <span className="text-border">→</span>
                       <span className="font-medium">{seg.to.name}</span>
+                      {onRefreshStore && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onRefreshStore(idx + 1);
+                          }}
+                          className="shrink-0 w-4 h-4 flex items-center justify-center rounded-full bg-secondary hover:bg-primary hover:text-white transition-colors"
+                          title={`替换${seg.to.name}`}
+                        >
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                            <path d="M1 4v6h6M23 20v-6h-6" />
+                            <path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" />
+                          </svg>
+                        </button>
+                      )}
                     </p>
                     <p className="text-xs mt-0.5 flex items-center gap-2">
                       <span

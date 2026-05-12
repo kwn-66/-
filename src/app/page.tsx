@@ -63,6 +63,7 @@ export default function Home() {
   const [feedPOIs, setFeedPOIs] = useState<POIResult[]>([]);
   const [feedLoading, setFeedLoading] = useState(false);
   const [routePool, setRoutePool] = useState<POIResult[]>([]);
+  const [aiStoreCount, setAiStoreCount] = useState(5);
 
   // ---- 我的路线 ----
   const [savedRoutesKey, setSavedRoutesKey] = useState(0);
@@ -282,12 +283,81 @@ export default function Home() {
     await doPlanRoute(routePool);
   }, [routePool, doPlanRoute]);
 
-  // ---- AI 推荐：自动选评分最高的3家 ----
+  // ---- AI 推荐：分类去重 + 店铺数量选择器 ----
   const handleAutoRecommend = useCallback(async () => {
-    const top3 = feedPOIs.slice(0, 3);
-    setRoutePool(top3);
-    await doPlanRoute(top3);
-  }, [feedPOIs, doPlanRoute]);
+    const count = Math.max(2, Math.min(10, aiStoreCount));
+    if (feedPOIs.length === 0) return;
+
+    // 按分类分组，确保每个分类至少入选1家
+    const catCount = selectedCategories.length;
+    const picked: POIResult[] = [];
+    const usedIds = new Set<string>();
+    const allPois = [...feedPOIs];
+
+    // 第一轮：每个分类至少选1家
+    for (let i = 0; i < catCount; i++) {
+      const match = allPois.find((p) => !usedIds.has(p.id));
+      if (match) {
+        picked.push(match);
+        usedIds.add(match.id);
+      }
+    }
+
+    // 第二轮：剩余名额从余下的店中补齐
+    for (let i = picked.length; i < count; i++) {
+      const next = allPois.find((p) => !usedIds.has(p.id));
+      if (next) {
+        picked.push(next);
+        usedIds.add(next.id);
+      } else break;
+    }
+
+    if (picked.length < 2) return;
+    setRoutePool(picked);
+    await doPlanRoute(picked);
+  }, [feedPOIs, doPlanRoute, aiStoreCount, selectedCategories, city]);
+
+  // ---- 单店刷新：同分类替换 ----
+  const handleRefreshStore = useCallback(
+    async (index: number) => {
+      if (!routePlan || !map) return;
+      const current = routePlan.order[index];
+      if (!current) return;
+
+      // 在同分类下搜索替代店铺
+      const keyword = current.name.slice(0, 2) || current.name;
+      const pois = await searchMultiCategories([keyword], city.name);
+
+      // 过滤当前已在路线中的
+      const existingIds = new Set(routePlan.order.map((p) => p.id));
+      const candidates = pois.filter((p) => !existingIds.has(p.id));
+
+      if (candidates.length === 0) return;
+
+      // 取最近的替代店
+      const replacement = candidates[0];
+      const newOrder = routePlan.order.map((p, i) =>
+        i === index ? replacement : p
+      );
+
+      // 重新规划
+      setFoundPOIs(newOrder);
+      clearMarkers();
+      clearLines();
+      routeAnimation.cleanup();
+      setPlanning(true);
+
+      const plan = await planSmartRoute(userLocation, newOrder, transportPrefs);
+      setRoutePlan(plan);
+      setFoundPOIs(plan.order);
+      if (map) showMarkers(map, plan.order);
+      if (map) drawRoute(map, plan);
+      if (map) routeAnimation.init(map, plan);
+
+      setPlanning(false);
+    },
+    [routePlan, userLocation, transportPrefs, map, city.name]
+  );
 
   // ---- 交通偏好变化 ----
   const handleTransportPrefsChange = useCallback(
@@ -477,13 +547,36 @@ export default function Home() {
                 />
               )}
               {feedPOIs.length > 0 && routePool.length === 0 && (
-                <button
-                  onClick={handleAutoRecommend}
-                  disabled={planning}
-                  className="w-full h-10 flex items-center justify-center gap-2 text-sm text-primary border border-dashed border-primary/40 rounded-xl hover:bg-primary-light transition-colors active:scale-[0.99] disabled:opacity-50"
-                >
-                  🤖 帮我推荐3家
-                </button>
+                <div className="space-y-2">
+                  {/* 店铺数量选择器 */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-muted">推荐店铺数量</span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => setAiStoreCount((c) => Math.max(2, c - 1))}
+                        className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-xs"
+                      >
+                        −
+                      </button>
+                      <span className="text-sm font-medium w-6 text-center">
+                        {aiStoreCount}
+                      </span>
+                      <button
+                        onClick={() => setAiStoreCount((c) => Math.min(10, c + 1))}
+                        className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-xs"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleAutoRecommend}
+                    disabled={planning}
+                    className="w-full h-10 flex items-center justify-center gap-2 text-sm text-primary border border-dashed border-primary/40 rounded-xl hover:bg-primary-light transition-colors active:scale-[0.99] disabled:opacity-50"
+                  >
+                    🤖 帮我推荐 {aiStoreCount} 家
+                  </button>
+                </div>
               )}
               <RoutePool
                 stores={routePool}
@@ -512,6 +605,7 @@ export default function Home() {
               onReset={routeAnimation.reset}
               onSave={handleSaveRoute}
               saveDisabled={saveDisabled}
+              onRefreshStore={handleRefreshStore}
             />
           )}
 
