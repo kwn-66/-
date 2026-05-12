@@ -8,6 +8,7 @@ import type {
   TransportPrefs,
   RoutePlan,
   RouteSegment,
+  MultiRoutePlan,
 } from "@/types";
 
 /** 从路线 steps 中提取路径坐标 */
@@ -163,16 +164,133 @@ export async function planSmartRoute(
 }
 
 /**
- * 统一交通方式路线规划（兼容旧接口，切换统一模式时使用）
+ * 多方案路线规划
+ *
+ * 方案1「最优路线」：贪心最近邻 + 混合交通，距离优先递进
+ * 方案2「口碑优先」：优先访问 POI 密集区域（热门商圈），再递进
+ * 方案3「最省时间」：长距离段强制驾车，时间最小化
  */
-export async function planUniformRoute(
+export async function planMultiRoute(
   userLocation: UserLocation | null,
   pois: POIResult[],
-  mode: TravelMode
+  prefs: TransportPrefs
+): Promise<MultiRoutePlan> {
+  const plans: RoutePlan[] = [];
+  const labels: string[] = [];
+
+  if (pois.length === 0) {
+    return {
+      plans: [
+        { segments: [], totalDistance: 0, totalDuration: 0, order: [] },
+      ],
+      labels: ["最优路线"],
+      currentIndex: 0,
+    };
+  }
+
+  // ---- 方案1：最优路线（贪心最近邻 + 混合交通） ----
+  const plan1 = await planSmartRoute(userLocation, pois, prefs);
+  plans.push(plan1);
+  labels.push("最优路线");
+
+  // ---- 方案2：口碑优先（POI 密集区优先） ----
+  // 计算 POI 集群中心，优先访问靠近中心的店（热门商圈）
+  const cx = pois.reduce((s, p) => s + p.location[0], 0) / pois.length;
+  const cy = pois.reduce((s, p) => s + p.location[1], 0) / pois.length;
+  const centroid: [number, number] = [cx, cy];
+
+  // 按距离集群中心排序（近=热门），然后贪心路径优化
+  const popularOrder = optimizeOrder(
+    userLocation
+      ? [userLocation.lng, userLocation.lat]
+      : centroid,
+    [...pois].sort(
+      (a, b) =>
+        haversine(centroid[0], centroid[1], a.location[0], a.location[1]) -
+        haversine(centroid[0], centroid[1], b.location[0], b.location[1])
+    )
+  );
+
+  const plan2 = await buildPlanFromOrder(
+    userLocation,
+    popularOrder,
+    prefs
+  );
+  plans.push(plan2);
+  labels.push("口碑优先");
+
+  // ---- 方案3：最省时间（长距离强制驾车） ----
+  const fastPrefs: TransportPrefs = {
+    walking: prefs.walking,
+    bicycling: false,
+    driving: true,
+  };
+
+  const plan3 = await buildPlanFromOrder(
+    userLocation,
+    optimizeOrder(
+      userLocation
+        ? [userLocation.lng, userLocation.lat]
+        : [104.0657, 30.6573],
+      [...pois]
+    ),
+    fastPrefs
+  );
+  plans.push(plan3);
+  labels.push("最省时间");
+
+  return { plans, labels, currentIndex: 0 };
+}
+
+/** 按给定顺序构建完整路线（复用逐段计算逻辑） */
+async function buildPlanFromOrder(
+  userLocation: UserLocation | null,
+  order: POIResult[],
+  prefs: TransportPrefs
 ): Promise<RoutePlan> {
-  return planSmartRoute(userLocation, pois, {
-    walking: mode === "walking",
-    bicycling: mode === "bicycling",
-    driving: mode === "driving",
-  });
+  const start: [number, number] = userLocation
+    ? [userLocation.lng, userLocation.lat]
+    : [104.0657, 30.6573];
+
+  const segments: RouteSegment[] = [];
+  let prevPoint = start;
+  let prevName = userLocation?.address || "当前位置";
+
+  for (const poi of order) {
+    const straightDist = haversine(
+      prevPoint[0],
+      prevPoint[1],
+      poi.location[0],
+      poi.location[1]
+    );
+    const bestMode = decideBestMode(straightDist, prefs);
+
+    const { distance, duration, path } = await calculateSegment(
+      prevPoint,
+      poi.location,
+      bestMode
+    );
+
+    segments.push({
+      from: { name: prevName, location: prevPoint },
+      to: {
+        name: poi.name,
+        location: poi.location,
+        categoryIcon: poi.categoryIcon,
+        categoryName: poi.categoryName,
+      },
+      distance,
+      duration,
+      mode: bestMode,
+      path,
+    });
+
+    prevPoint = poi.location;
+    prevName = poi.name;
+  }
+
+  const totalDistance = segments.reduce((sum, s) => sum + s.distance, 0);
+  const totalDuration = segments.reduce((sum, s) => sum + s.duration, 0);
+
+  return { segments, totalDistance, totalDuration, order };
 }

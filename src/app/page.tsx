@@ -14,13 +14,14 @@ import { useMarkers } from "@/hooks/useMarkers";
 import { useRouteLine } from "@/hooks/useRouteLine";
 import { useRouteAnimation } from "@/hooks/useRouteAnimation";
 import { searchAllShops, searchMultiCategories, searchGroupedByCategory } from "@/services/poi";
-import { planSmartRoute } from "@/route-engine/planner";
+import { planMultiRoute } from "@/route-engine/planner";
 import { saveRoute as persistRoute } from "@/features/saved-routes/storage";
 import { getAllCities } from "@/cities/registry";
 import type {
   UserLocation,
   ShopInput as ShopInputType,
   RoutePlan,
+  MultiRoutePlan,
   TransportPrefs,
   POIResult,
   PanelTab,
@@ -55,6 +56,7 @@ export default function Home() {
   const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
   const [foundPOIs, setFoundPOIs] = useState<POIResult[]>([]);
   const [routePlan, setRoutePlan] = useState<RoutePlan | null>(null);
+  const [multiPlan, setMultiPlan] = useState<MultiRoutePlan | null>(null);
   const [transportPrefs, setTransportPrefs] = useState<TransportPrefs>(DEFAULT_PREFS);
   const [hoveredSegment, setHoveredSegment] = useState<number | null>(null);
 
@@ -218,22 +220,23 @@ export default function Home() {
       clearLines();
       routeAnimation.cleanup();
       setRoutePlan(null);
+      setMultiPlan(null);
 
       if (pois.length === 0) {
         setPlanning(false);
         return;
       }
 
-      // 路线优化
-      const plan = await planSmartRoute(userLocation, pois, transportPrefs);
+      // 生成三套路线方案
+      const mp = await planMultiRoute(userLocation, pois, transportPrefs);
+      setMultiPlan(mp);
+      setFoundPOIs(mp.plans[0].order);
+      setRoutePlan(mp.plans[0]);
 
-      setFoundPOIs(plan.order);
-      setRoutePlan(plan);
-
-      // 地图显示
-      if (map) showMarkers(map, plan.order);
-      if (map) drawRoute(map, plan);
-      if (map) routeAnimation.init(map, plan);
+      // 地图显示方案1
+      if (map) showMarkers(map, mp.plans[0].order);
+      if (map) drawRoute(map, mp.plans[0]);
+      if (map) routeAnimation.init(map, mp.plans[0]);
 
       setPlanning(false);
       setActiveTab("route");
@@ -242,6 +245,25 @@ export default function Home() {
       userLocation, transportPrefs, map,
       showMarkers, clearMarkers, clearLines, drawRoute, routeAnimation,
     ]
+  );
+
+  // ---- 方案切换 ----
+  const handlePlanChange = useCallback(
+    (index: number) => {
+      if (!multiPlan || !map) return;
+      const plan = multiPlan.plans[index];
+      if (!plan) return;
+
+      setMultiPlan({ ...multiPlan, currentIndex: index });
+      setRoutePlan(plan);
+      setFoundPOIs(plan.order);
+
+      clearLines();
+      routeAnimation.cleanup();
+      drawRoute(map, plan);
+      routeAnimation.init(map, plan);
+    },
+    [multiPlan, map, clearLines, drawRoute, routeAnimation]
   );
 
   // ---- 手动输入：搜索并规划 ----
@@ -323,9 +345,11 @@ export default function Home() {
       const current = routePlan.order[index];
       if (!current) return;
 
-      // 在同分类下搜索替代店铺
-      const keyword = current.name.slice(0, 2) || current.name;
-      const pois = await searchMultiCategories([keyword], city.name);
+      // 在同一分类下搜索替代店铺
+      const keywords = current.categoryName
+        ? [current.categoryName]
+        : [current.name.slice(0, 2)];
+      const pois = await searchMultiCategories(keywords, city.name);
 
       // 过滤当前已在路线中的
       const existingIds = new Set(routePlan.order.map((p) => p.id));
@@ -339,19 +363,20 @@ export default function Home() {
         i === index ? replacement : p
       );
 
-      // 重新规划
-      setFoundPOIs(newOrder);
+      // 重新生成三套方案
       clearMarkers();
       clearLines();
       routeAnimation.cleanup();
       setPlanning(true);
 
-      const plan = await planSmartRoute(userLocation, newOrder, transportPrefs);
-      setRoutePlan(plan);
-      setFoundPOIs(plan.order);
-      if (map) showMarkers(map, plan.order);
-      if (map) drawRoute(map, plan);
-      if (map) routeAnimation.init(map, plan);
+      const mp = await planMultiRoute(userLocation, newOrder, transportPrefs);
+      setMultiPlan(mp);
+      const currentPlan = mp.plans[0];
+      setRoutePlan(currentPlan);
+      setFoundPOIs(currentPlan.order);
+      if (map) showMarkers(map, currentPlan.order);
+      if (map) drawRoute(map, currentPlan);
+      if (map) routeAnimation.init(map, currentPlan);
 
       setPlanning(false);
     },
@@ -368,11 +393,13 @@ export default function Home() {
       routeAnimation.cleanup();
       setPlanning(true);
 
-      const plan = await planSmartRoute(userLocation, foundPOIs, prefs);
-      setRoutePlan(plan);
+      const mp = await planMultiRoute(userLocation, foundPOIs, prefs);
+      setMultiPlan(mp);
+      const currentPlan = mp.plans[mp.currentIndex] || mp.plans[0];
+      setRoutePlan(currentPlan);
 
-      if (map) drawRoute(map, plan);
-      if (map) routeAnimation.init(map, plan);
+      if (map) drawRoute(map, currentPlan);
+      if (map) routeAnimation.init(map, currentPlan);
 
       setPlanning(false);
     },
@@ -427,18 +454,21 @@ export default function Home() {
       <header className="px-4 pt-4 pb-2 shrink-0 flex items-center justify-between">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
+            <h1 className="text-base font-bold tracking-wide">
+              出游日记
+            </h1>
             <button
               onClick={() => setShowCityPicker(!showCityPicker)}
-              className="flex items-center gap-0.5 text-lg font-semibold hover:text-primary transition-colors"
+              className="flex items-center gap-0.5 text-sm text-muted hover:text-primary transition-colors ml-1"
             >
               {city.name}
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M6 9l6 6 6-6" />
               </svg>
             </button>
           </div>
           <p className="text-xs text-muted mt-0.5">
-            智能混合交通 · 自动最优路线
+            AI 城市出游路线规划
           </p>
         </div>
         <button
@@ -591,6 +621,8 @@ export default function Home() {
             <RouteCard
               planning={planning}
               routePlan={routePlan}
+              multiPlan={multiPlan}
+              onPlanChange={handlePlanChange}
               transportPrefs={prefsEffective}
               onTransportPrefsChange={handleTransportPrefsChange}
               animStatus={routeAnimation.animState.status}

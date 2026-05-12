@@ -16,10 +16,10 @@ function formatDistance(m: number | undefined): string {
   return `${(m / 1000).toFixed(1)}km`;
 }
 
-function openStoreLink(name: string) {
-  const encoded = encodeURIComponent(name);
+function openStoreLink(name: string, city?: string) {
+  const query = encodeURIComponent(city ? `${name} ${city}` : name);
   window.open(
-    `https://www.dianping.com/search/keyword/1/0_${encoded}`,
+    `https://www.dianping.com/search/keyword/1/0_${query}`,
     "_blank",
     "noopener,noreferrer"
   );
@@ -152,10 +152,10 @@ export default function StoreFeed({
                             onClick={(e) => e.stopPropagation()}
                           >
                             {[
-                              { label: "大众点评", url: `https://www.dianping.com/search/keyword/1/0_${encodeURIComponent(poi.name)}` },
                               { label: "美团", url: `https://i.meituan.com/s/${encodeURIComponent(poi.name)}` },
+                              { label: "大众点评", url: `https://www.dianping.com/search/keyword/1/0_${encodeURIComponent(poi.name)}` },
                               { label: "高德", url: `https://uri.amap.com/search?keyword=${encodeURIComponent(poi.name)}` },
-                              { label: "小红书", url: `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(poi.name)}` },
+                              { label: "抖音", url: `https://www.douyin.com/search/${encodeURIComponent(poi.name)}` },
                             ].map(({ label, url }) => (
                               <a
                                 key={label}

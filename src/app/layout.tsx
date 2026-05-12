@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "成都探店路线规划",
-  description: "输入想吃的店铺，自动规划最省时的探店路线",
+  title: "出游日记 | AI 城市出游路线规划",
+  description: "基于定位的智能城市出游路线生成系统，吃喝玩乐一站规划",
 };
 
 export const viewport = {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import type { RoutePlan, TransportPrefs, AnimationStatus } from "@/types";
+import type { RoutePlan, MultiRoutePlan, TransportPrefs, AnimationStatus } from "@/types";
 import { modeLabel, modeColor } from "@/route-engine/mode-decider";
 import TransportCheckboxes from "@/ui/TransportCheckboxes";
 
@@ -24,6 +24,8 @@ function formatDuration(s: number): string {
 interface RouteCardProps {
   planning: boolean;
   routePlan: RoutePlan | null;
+  multiPlan?: { plans: RoutePlan[]; labels: string[]; currentIndex: number } | null;
+  onPlanChange?: (index: number) => void;
   transportPrefs: TransportPrefs;
   onTransportPrefsChange: (prefs: TransportPrefs) => void;
   animStatus?: AnimationStatus;
@@ -39,6 +41,8 @@ interface RouteCardProps {
 export default function RouteCard({
   planning,
   routePlan,
+  multiPlan,
+  onPlanChange,
   transportPrefs,
   onTransportPrefsChange,
   animStatus,
@@ -156,6 +160,25 @@ export default function RouteCard({
               </div>
             )}
           </div>
+
+          {/* 方案切换标签 */}
+          {multiPlan && multiPlan.plans.length > 1 && onPlanChange && (
+            <div className="flex gap-1 mb-3">
+              {multiPlan.labels.map((label, i) => (
+                <button
+                  key={label}
+                  onClick={() => onPlanChange(i)}
+                  className={`flex-1 py-1.5 text-xs rounded-lg border transition-all active:scale-95 ${
+                    i === multiPlan.currentIndex
+                      ? "bg-primary text-white border-primary"
+                      : "bg-secondary text-muted border-border hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* 交通方式勾选 */}
           <div className="mb-3">

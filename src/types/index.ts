@@ -72,7 +72,14 @@ export interface RoutePlan {
   segments: RouteSegment[];
   totalDistance: number;
   totalDuration: number;
-  order: POIResult[]; // 最优访问顺序（已排序）
+  order: POIResult[];
+}
+
+/** 多方案路线规划结果 */
+export interface MultiRoutePlan {
+  plans: RoutePlan[];
+  labels: string[];
+  currentIndex: number;
 }
 
 /** 用户位置 */
