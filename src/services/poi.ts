@@ -1,13 +1,12 @@
 import type { POIResult, ShopInput } from "@/types";
 import { isAMapReady } from "@/lib/amap";
 
-const SEARCH_CITY = "成都";
 const PAGE_SIZE = 5;
 const DISCOVER_PAGE_SIZE = 15;
 
-/** 搜索成都范围内的 POI */
-export function searchPOI(keyword: string): Promise<POIResult[]> {
-  return searchPOIWithOptions(keyword, { pageSize: PAGE_SIZE });
+/** 搜索 POI */
+export function searchPOI(keyword: string, city?: string): Promise<POIResult[]> {
+  return searchPOIWithOptions(keyword, { pageSize: PAGE_SIZE, city });
 }
 
 /** 扩展搜索 */
@@ -15,6 +14,7 @@ export function searchPOIWithOptions(
   keyword: string,
   options?: {
     pageSize?: number;
+    city?: string;
     district?: string;
   }
 ): Promise<POIResult[]> {
@@ -24,9 +24,11 @@ export function searchPOIWithOptions(
       return;
     }
 
+    const city = options?.city || "成都";
+
     try {
       const searchOptions: AMap.PlaceSearchOptions = {
-        city: SEARCH_CITY,
+        city,
         citylimit: true,
         pageSize: options?.pageSize ?? PAGE_SIZE,
         pageIndex: 1,
@@ -72,10 +74,12 @@ export function searchPOIWithOptions(
 /** 按分类搜索店铺（浏览发现模式） */
 export async function searchByCategory(
   keyword: string,
+  city?: string,
   district?: string
 ): Promise<POIResult[]> {
   return searchPOIWithOptions(keyword, {
     pageSize: DISCOVER_PAGE_SIZE,
+    city,
     district,
   });
 }
@@ -83,12 +87,12 @@ export async function searchByCategory(
 /** 按多个分类批量搜索并去重 */
 export async function searchMultiCategories(
   keywords: string[],
+  city?: string,
   district?: string
 ): Promise<POIResult[]> {
   const allResults = await Promise.all(
-    keywords.map((kw) => searchByCategory(kw, district))
+    keywords.map((kw) => searchByCategory(kw, city, district))
   );
-  // 去重
   const seen = new Set<string>();
   return allResults.flat().filter((poi) => {
     if (seen.has(poi.id)) return false;
@@ -99,7 +103,8 @@ export async function searchMultiCategories(
 
 /** 批量搜索店铺，返回每个店铺的 POI 匹配结果 */
 export async function searchAllShops(
-  shops: ShopInput[]
+  shops: ShopInput[],
+  city?: string
 ): Promise<ShopInput[]> {
   const results = await Promise.all(
     shops.map(async (shop) => {
@@ -107,13 +112,14 @@ export async function searchAllShops(
       if (!name) return shop;
 
       try {
-        const pois = await searchPOI(name);
-        const chengduPois = pois.filter(
-          (poi) => poi.city === "成都市" || poi.city === "成都"
+        const pois = await searchPOI(name, city);
+        const cityName = city || "成都";
+        const localPois = pois.filter(
+          (poi) => poi.city?.includes(cityName) || poi.city === cityName
         );
         return {
           ...shop,
-          poi: chengduPois[0] || pois[0] || null,
+          poi: localPois[0] || pois[0] || null,
           loading: false,
         };
       } catch {

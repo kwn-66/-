@@ -2,34 +2,41 @@
 
 import { useState, useCallback, useRef } from "react";
 import { isAMapReady } from "@/lib/amap";
-import type { UserLocation } from "@/types";
-
-/** 成都市中心坐标（默认兜底位置） */
-export const CHENGDU_CENTER: UserLocation = {
-  lng: 104.0657,
-  lat: 30.6573,
-  address: "成都市天府广场",
-};
+import { detectCityFromCoords, getDefaultCity } from "@/cities/registry";
+import type { UserLocation, CityConfig } from "@/types";
 
 interface UseGeolocationReturn {
   locating: boolean;
   location: UserLocation | null;
+  city: CityConfig;
   error: string | null;
-  getUserLocation: () => Promise<UserLocation>;
+  getUserLocation: () => Promise<{ location: UserLocation; city: CityConfig }>;
+  setCity: (city: CityConfig) => void;
 }
 
 export function useGeolocation(): UseGeolocationReturn {
   const [locating, setLocating] = useState(false);
   const [location, setLocation] = useState<UserLocation | null>(null);
+  const [city, setCityState] = useState<CityConfig>(getDefaultCity);
   const [error, setError] = useState<string | null>(null);
   const geolocationRef = useRef<AMap.Geolocation | null>(null);
 
-  const getUserLocation = useCallback(async (): Promise<UserLocation> => {
+  const getUserLocation = useCallback(async (): Promise<{
+    location: UserLocation;
+    city: CityConfig;
+  }> => {
     setLocating(true);
     setError(null);
 
     return new Promise((resolve) => {
-      // 先尝试浏览器原生定位（更快更准）
+      const resolveWith = (loc: UserLocation) => {
+        const detectedCity = detectCityFromCoords(loc.lat, loc.lng, loc.address);
+        setLocation(loc);
+        setCityState(detectedCity);
+        setLocating(false);
+        resolve({ location: loc, city: detectedCity });
+      };
+
       const tryNative = () => {
         if (!navigator.geolocation) return tryAMap();
 
@@ -39,24 +46,24 @@ export function useGeolocation(): UseGeolocationReturn {
               lng: pos.coords.longitude,
               lat: pos.coords.latitude,
             };
-            setLocation(loc);
-            setLocating(false);
-            resolve(loc);
+            resolveWith(loc);
           },
-          () => {
-            // 原生定位失败，降级到高德 IP 定位
-            tryAMap();
-          },
+          () => tryAMap(),
           { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 }
         );
       };
 
-      // 降级：使用高德 IP 定位（无需用户授权，精度较低但可用）
       const tryAMap = () => {
         if (!isAMapReady()) {
+          const fallback = getDefaultCity();
+          const loc: UserLocation = {
+            lng: fallback.center[0],
+            lat: fallback.center[1],
+            address: fallback.name,
+          };
           setLocating(false);
-          setError("定位不可用，使用默认成都位置");
-          resolve(CHENGDU_CENTER);
+          setError("定位不可用，使用默认城市");
+          resolve({ location: loc, city: fallback });
           return;
         }
 
@@ -69,24 +76,34 @@ export function useGeolocation(): UseGeolocationReturn {
           }
 
           geolocationRef.current!.getCurrentPosition((status, result) => {
-            setLocating(false);
             if (status === "complete" && result.position) {
               const loc: UserLocation = {
                 lng: result.position.lng,
                 lat: result.position.lat,
                 address: result.formattedAddress,
               };
-              setLocation(loc);
-              resolve(loc);
+              resolveWith(loc);
             } else {
-              setError("定位失败，使用默认成都位置");
-              resolve(CHENGDU_CENTER);
+              const fallback = getDefaultCity();
+              const loc: UserLocation = {
+                lng: fallback.center[0],
+                lat: fallback.center[1],
+                address: fallback.name,
+              };
+              setError("定位失败，使用默认城市");
+              resolve({ location: loc, city: fallback });
             }
           });
         } catch {
+          const fallback = getDefaultCity();
+          const loc: UserLocation = {
+            lng: fallback.center[0],
+            lat: fallback.center[1],
+            address: fallback.name,
+          };
           setLocating(false);
-          setError("定位失败，使用默认成都位置");
-          resolve(CHENGDU_CENTER);
+          setError("定位失败，使用默认城市");
+          resolve({ location: loc, city: fallback });
         }
       };
 
@@ -94,5 +111,12 @@ export function useGeolocation(): UseGeolocationReturn {
     });
   }, []);
 
-  return { locating, location, error, getUserLocation };
+  return {
+    locating,
+    location,
+    city,
+    error,
+    getUserLocation,
+    setCity: setCityState,
+  };
 }

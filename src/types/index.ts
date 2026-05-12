@@ -106,3 +106,13 @@ export interface SavedRoute {
 
 /** 底部面板 Tab 类型 */
 export type PanelTab = "manual" | "discover" | "route" | "saved";
+
+/** 城市配置 */
+export interface CityConfig {
+  code: string;
+  name: string;
+  center: [number, number];
+  zoom: number;
+  districts: District[];
+  categories: Category[];
+}

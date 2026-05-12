@@ -16,7 +16,7 @@ import { useRouteAnimation } from "@/hooks/useRouteAnimation";
 import { searchAllShops, searchMultiCategories } from "@/services/poi";
 import { planSmartRoute } from "@/route-engine/planner";
 import { saveRoute as persistRoute } from "@/features/saved-routes/storage";
-import { CHENGDU_DISTRICTS, CHENGDU_CATEGORIES } from "@/config/chengdu";
+import { getAllCities } from "@/cities/registry";
 import type {
   UserLocation,
   ShopInput as ShopInputType,
@@ -25,9 +25,8 @@ import type {
   POIResult,
   PanelTab,
   SavedRoute,
+  CityConfig,
 } from "@/types";
-
-const CHENGDU_CENTER: [number, number] = [104.0657, 30.6573];
 
 const DEFAULT_PREFS: TransportPrefs = {
   walking: true,
@@ -37,11 +36,12 @@ const DEFAULT_PREFS: TransportPrefs = {
 
 export default function Home() {
   const [map, setMap] = useState<AMap.Map | null>(null);
-  const { locating, getUserLocation, error: geoError } = useGeolocation();
+  const { locating, city, setCity, getUserLocation, error: geoError } = useGeolocation();
   const { showMarkers, clearMarkers } = useMarkers();
   const { drawRoute, clearLines, setOnHover } = useRouteLine();
   const routeAnimation = useRouteAnimation();
   const userMarkerRef = useRef<AMap.Marker | null>(null);
+  const allCities = useMemo(() => getAllCities(), []);
 
   // ---- Tab 状态 ----
   const [activeTab, setActiveTab] = useState<PanelTab>("manual");
@@ -69,16 +69,39 @@ export default function Home() {
 
   // ---- 保存路线 ----
   const [saveDisabled, setSaveDisabled] = useState(false);
+  const [showCityPicker, setShowCityPicker] = useState(false);
 
-  // 动画禁用交通切换
-  const prefsEffective = useMemo(() => {
-    return transportPrefs;
-  }, [transportPrefs]);
+  const prefsEffective = useMemo(() => transportPrefs, [transportPrefs]);
 
   // ---- 页面加载自动定位 ----
   useEffect(() => {
-    getUserLocation().then(setUserLocation);
-  }, [getUserLocation]);
+    getUserLocation().then((result) => {
+      setUserLocation(result.location);
+      setCity(result.city);
+    });
+  }, [getUserLocation, setCity]);
+
+  // ---- 切换城市时重置 ----
+  const handleCityChange = useCallback((newCity: CityConfig) => {
+    setCity(newCity);
+    setShowCityPicker(false);
+    setSelectedDistricts(["all"]);
+    setSelectedCategories([]);
+    setFeedPOIs([]);
+    setRoutePool([]);
+    setRoutePlan(null);
+    setFoundPOIs([]);
+    clearMarkers();
+    clearLines();
+    routeAnimation.cleanup();
+    if (map) {
+      map.setCenter(newCity.center);
+      map.setZoom(newCity.zoom);
+      if (userMarkerRef.current) {
+        userMarkerRef.current.setPosition(newCity.center);
+      }
+    }
+  }, [map, setCity, clearMarkers, clearLines, routeAnimation]);
 
   // ---- 地图就绪 ----
   const handleMapReady = useCallback((mapInstance: AMap.Map) => {
@@ -95,15 +118,16 @@ export default function Home() {
         box-shadow: 0 2px 8px rgba(0,122,255,0.4);
       "></div>
     `;
+    const pos = city.center;
     const marker = new window.AMap.Marker({
-      position: CHENGDU_CENTER,
+      position: pos,
       content: markerContent,
       offset: { x: -8, y: -8 },
       zIndex: 100,
     });
     marker.setMap(mapInstance);
     userMarkerRef.current = marker;
-  }, []);
+  }, [city]);
 
   const moveToUserLocation = useCallback(
     (loc: UserLocation) => {
@@ -118,24 +142,25 @@ export default function Home() {
   );
 
   const handleLocate = useCallback(async () => {
-    const loc = await getUserLocation();
-    setUserLocation(loc);
-    moveToUserLocation(loc);
-  }, [getUserLocation, moveToUserLocation]);
+    const result = await getUserLocation();
+    setUserLocation(result.location);
+    setCity(result.city);
+    moveToUserLocation(result.location);
+  }, [getUserLocation, setCity, moveToUserLocation]);
 
   // ---- 区域切换 → 聚焦地图 ----
   const handleDistrictChange = useCallback(
     (codes: string[]) => {
       setSelectedDistricts(codes);
       if (map) {
-        const dist = CHENGDU_DISTRICTS.find((d) => d.code === codes[0]);
+        const dist = city.districts.find((d) => d.code === codes[0]);
         if (dist) {
           map.setCenter(dist.center);
           map.setZoom(dist.zoom);
         }
       }
     },
-    [map]
+    [map, city]
   );
 
   // ---- 分类区域变化 → 搜索 POI ----
@@ -152,14 +177,14 @@ export default function Home() {
     const district = selectedDistricts[0];
     const districtName =
       district && district !== "all"
-        ? CHENGDU_DISTRICTS.find((d) => d.code === district)?.name
+        ? city.districts.find((d) => d.code === district)?.name
         : undefined;
 
     const keywords = selectedCategories
-      .map((id) => CHENGDU_CATEGORIES.find((c) => c.id === id)?.keyword)
+      .map((id) => city.categories.find((c) => c.id === id)?.keyword)
       .filter(Boolean) as string[];
 
-    searchMultiCategories(keywords, districtName).then((pois) => {
+    searchMultiCategories(keywords, city.name, districtName).then((pois) => {
       if (cancelled) return;
       setFeedPOIs(pois);
       setFeedLoading(false);
@@ -233,7 +258,7 @@ export default function Home() {
       prev.map((s) => (s.name.trim() ? { ...s, loading: true } : s))
     );
 
-    const results = await searchAllShops(validShops);
+    const results = await searchAllShops(validShops, city.name);
     setShops(results);
 
     const pois = results
@@ -293,7 +318,7 @@ export default function Home() {
         id: `route_${Date.now()}`,
         title,
         createdAt: new Date().toISOString(),
-        city: "成都",
+        city: city.name,
         districts: selectedDistricts,
         categories: selectedCategories,
         stores: foundPOIs,
@@ -331,8 +356,18 @@ export default function Home() {
     <div className="flex flex-col h-full bg-background">
       {/* 顶部 */}
       <header className="px-4 pt-4 pb-2 shrink-0 flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-semibold">成都探店路线规划</h1>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowCityPicker(!showCityPicker)}
+              className="flex items-center gap-0.5 text-lg font-semibold hover:text-primary transition-colors"
+            >
+              {city.name}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted">
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </button>
+          </div>
           <p className="text-xs text-muted mt-0.5">
             智能混合交通 · 自动最优路线
           </p>
@@ -356,6 +391,27 @@ export default function Home() {
       {geoError && (
         <div className="px-4 pb-1">
           <p className="text-xs text-muted">{geoError}</p>
+        </div>
+      )}
+
+      {/* 城市选择器 */}
+      {showCityPicker && (
+        <div className="px-4 pb-2">
+          <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+            {allCities.map((c) => (
+              <button
+                key={c.code}
+                onClick={() => handleCityChange(c)}
+                className={`shrink-0 px-3 py-1.5 text-xs rounded-full border transition-all active:scale-95 ${
+                  c.code === city.code
+                    ? "bg-primary text-white border-primary"
+                    : "bg-white text-foreground border-border hover:border-primary/40"
+                }`}
+              >
+                {c.name}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -403,12 +459,12 @@ export default function Home() {
           {activeTab === "discover" && (
             <div className="space-y-3">
               <DistrictFilter
-                districts={CHENGDU_DISTRICTS}
+                districts={city.districts}
                 selected={selectedDistricts}
                 onChange={handleDistrictChange}
               />
               <CategoryCards
-                categories={CHENGDU_CATEGORIES}
+                categories={city.categories}
                 selected={selectedCategories}
                 onChange={setSelectedCategories}
               />
