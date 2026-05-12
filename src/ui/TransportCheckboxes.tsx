@@ -6,6 +6,7 @@ const OPTIONS: { key: TravelMode; label: string; icon: string }[] = [
   { key: "walking", label: "步行", icon: "🚶" },
   { key: "bicycling", label: "骑行", icon: "🚴" },
   { key: "driving", label: "驾车", icon: "🚗" },
+  { key: "transit", label: "公交", icon: "🚇" },
 ];
 
 interface TransportCheckboxesProps {
@@ -22,7 +23,8 @@ export default function TransportCheckboxes({
   const toggle = (key: TravelMode) => {
     const newPrefs = { ...prefs, [key]: !prefs[key] };
     // 至少保留一种交通方式
-    if (!newPrefs.walking && !newPrefs.bicycling && !newPrefs.driving) return;
+    const anyEnabled = newPrefs.walking || newPrefs.bicycling || newPrefs.driving || newPrefs.transit;
+    if (!anyEnabled) return;
     onChange(newPrefs);
   };
 

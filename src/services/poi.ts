@@ -76,12 +76,66 @@ export function searchPOIWithOptions(
 export async function searchByCategory(
   keyword: string,
   city?: string,
-  district?: string
-): Promise<POIResult[]> {
-  return searchPOIWithOptions(keyword, {
+  district?: string,
+  pageIndex = 1
+): Promise<{ pois: POIResult[]; hasMore: boolean }> {
+  const pois = await searchPOIWithOptions(keyword, {
     pageSize: DISCOVER_PAGE_SIZE,
     city,
     district,
+  });
+
+  // 如果返回了满页结果，假设还有更多
+  return {
+    pois,
+    hasMore: pois.length >= DISCOVER_PAGE_SIZE,
+  };
+}
+
+/** 按分类搜索指定页 */
+export async function searchByCategoryPage(
+  keyword: string,
+  pageIndex: number,
+  city?: string,
+  district?: string
+): Promise<POIResult[]> {
+  // 高德 PlaceSearch 不支持 pageIndex，但支持翻页
+  // 使用 pageIndex 参数通过多次请求来模拟
+  return new Promise((resolve) => {
+    if (!isAMapReady()) { resolve([]); return; }
+
+    const searchCity = city || "成都";
+    let searchKeyword = keyword;
+    if (district && district !== "全部成都") {
+      searchKeyword = `${district} ${keyword}`;
+    }
+
+    const placeSearch = new window.AMap.PlaceSearch({
+      city: searchCity,
+      citylimit: true,
+      pageSize: DISCOVER_PAGE_SIZE,
+      pageIndex,
+    });
+
+    placeSearch.search(
+      searchKeyword,
+      (status: string, result: AMap.PlaceSearchResult) => {
+        if (status === "complete" && result.poiList?.pois) {
+          resolve(
+            result.poiList.pois.map((poi: AMap.POI) => ({
+              id: poi.id,
+              name: poi.name,
+              address: poi.address || "",
+              location: [poi.location.lng, poi.location.lat] as [number, number],
+              city: poi.cityname,
+              distance: poi.distance,
+            }))
+          );
+        } else {
+          resolve([]);
+        }
+      }
+    );
   });
 }
 
@@ -95,14 +149,15 @@ export async function searchMultiCategories(
     keywords.map((kw) => searchByCategory(kw, city, district))
   );
   const seen = new Set<string>();
-  return allResults.flat().filter((poi) => {
+  const pois = allResults.flatMap((r) => r.pois);
+  return pois.filter((poi) => {
     if (seen.has(poi.id)) return false;
     seen.add(poi.id);
     return true;
   });
 }
 
-/** 按分类独立搜索并分组（修复核心） */
+/** 按分类独立搜索并分组 */
 export async function searchGroupedByCategory(
   categories: Category[],
   city?: string,
@@ -110,8 +165,7 @@ export async function searchGroupedByCategory(
 ): Promise<CategoryGroup[]> {
   const groups = await Promise.all(
     categories.map(async (cat) => {
-      const pois = await searchByCategory(cat.keyword, city, district);
-      // 给每个 POI 打上分类标签
+      const { pois } = await searchByCategory(cat.keyword, city, district, 1);
       const tagged = pois.map((poi) => ({
         ...poi,
         categoryId: cat.id,
@@ -127,6 +181,22 @@ export async function searchGroupedByCategory(
     })
   );
   return groups;
+}
+
+/** 加载某个分类的下一页 */
+export async function loadMoreForCategory(
+  cat: Category,
+  pageIndex: number,
+  city?: string,
+  district?: string
+): Promise<POIResult[]> {
+  const pois = await searchByCategoryPage(cat.keyword, pageIndex, city, district);
+  return pois.map((poi) => ({
+    ...poi,
+    categoryId: cat.id,
+    categoryName: cat.name,
+    categoryIcon: cat.icon,
+  }));
 }
 
 /** 批量搜索店铺，返回每个店铺的 POI 匹配结果 */

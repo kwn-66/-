@@ -13,8 +13,8 @@ import { useGeolocation } from "@/hooks/useGeolocation";
 import { useMarkers } from "@/hooks/useMarkers";
 import { useRouteLine } from "@/hooks/useRouteLine";
 import { useRouteAnimation } from "@/hooks/useRouteAnimation";
-import { searchAllShops, searchMultiCategories, searchGroupedByCategory } from "@/services/poi";
-import { planMultiRoute } from "@/route-engine/planner";
+import { searchAllShops, searchMultiCategories, searchGroupedByCategory, loadMoreForCategory } from "@/services/poi";
+import { planSmartRoute, planMultiRoute } from "@/route-engine/planner";
 import { saveRoute as persistRoute } from "@/features/saved-routes/storage";
 import { getAllCities } from "@/cities/registry";
 import type {
@@ -34,6 +34,7 @@ const DEFAULT_PREFS: TransportPrefs = {
   walking: true,
   bicycling: true,
   driving: true,
+  transit: true,
 };
 
 export default function Home() {
@@ -65,6 +66,8 @@ export default function Home() {
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [feedGroups, setFeedGroups] = useState<CategoryGroup[]>([]);
   const [feedLoading, setFeedLoading] = useState(false);
+  const [categoryPages, setCategoryPages] = useState<Record<string, number>>({});
+  const [loadingMoreCat, setLoadingMoreCat] = useState<string | null>(null);
   const [routePool, setRoutePool] = useState<POIResult[]>([]);
   const [aiStoreCount, setAiStoreCount] = useState(5);
 
@@ -192,6 +195,10 @@ export default function Home() {
       if (cancelled) return;
       setFeedGroups(groups);
       setFeedLoading(false);
+      // 重置分页计数
+      const pages: Record<string, number> = {};
+      groups.forEach((g) => { pages[g.categoryId] = 1; });
+      setCategoryPages(pages);
     });
 
     return () => {
@@ -212,9 +219,41 @@ export default function Home() {
     setRoutePool((prev) => prev.filter((p) => p.id !== id));
   }, []);
 
+  // ---- 分页加载更多 ----
+  const handleLoadMore = useCallback(
+    async (catId: string) => {
+      const cat = city.categories.find((c) => c.id === catId);
+      if (!cat) return;
+
+      const nextPage = (categoryPages[catId] || 1) + 1;
+      setLoadingMoreCat(catId);
+
+      const district = selectedDistricts[0];
+      const districtName =
+        district && district !== "all"
+          ? city.districts.find((d) => d.code === district)?.name
+          : undefined;
+
+      const newPois = await loadMoreForCategory(cat, nextPage, city.name, districtName);
+      setLoadingMoreCat(null);
+
+      if (newPois.length === 0) return;
+
+      setFeedGroups((prev) =>
+        prev.map((g) =>
+          g.categoryId === catId
+            ? { ...g, pois: [...g.pois, ...newPois] }
+            : g
+        )
+      );
+      setCategoryPages((prev) => ({ ...prev, [catId]: nextPage }));
+    },
+    [categoryPages, city, selectedDistricts]
+  );
+
   // ---- 通用路线规划 ----
   const doPlanRoute = useCallback(
-    async (pois: POIResult[]) => {
+    async (pois: POIResult[], generateMulti = false) => {
       setPlanning(true);
       clearMarkers();
       clearLines();
@@ -227,16 +266,24 @@ export default function Home() {
         return;
       }
 
-      // 生成三套路线方案
-      const mp = await planMultiRoute(userLocation, pois, transportPrefs);
-      setMultiPlan(mp);
-      setFoundPOIs(mp.plans[0].order);
-      setRoutePlan(mp.plans[0]);
-
-      // 地图显示方案1
-      if (map) showMarkers(map, mp.plans[0].order);
-      if (map) drawRoute(map, mp.plans[0]);
-      if (map) routeAnimation.init(map, mp.plans[0]);
+      if (generateMulti) {
+        // AI 推荐：生成三套方案
+        const mp = await planMultiRoute(userLocation, pois, transportPrefs);
+        setMultiPlan(mp);
+        setFoundPOIs(mp.plans[0].order);
+        setRoutePlan(mp.plans[0]);
+        if (map) showMarkers(map, mp.plans[0].order);
+        if (map) drawRoute(map, mp.plans[0]);
+        if (map) routeAnimation.init(map, mp.plans[0]);
+      } else {
+        // 手动选店：唯一最优路线
+        const plan = await planSmartRoute(userLocation, pois, transportPrefs);
+        setRoutePlan(plan);
+        setFoundPOIs(plan.order);
+        if (map) showMarkers(map, plan.order);
+        if (map) drawRoute(map, plan);
+        if (map) routeAnimation.init(map, plan);
+      }
 
       setPlanning(false);
       setActiveTab("route");
@@ -335,7 +382,7 @@ export default function Home() {
 
     if (picked.length < 2) return;
     setRoutePool(picked);
-    await doPlanRoute(picked);
+    await doPlanRoute(picked, true);
   }, [feedGroups, doPlanRoute, aiStoreCount]);
 
   // ---- 单店刷新：同分类替换 ----
@@ -404,6 +451,51 @@ export default function Home() {
       setPlanning(false);
     },
     [foundPOIs, userLocation, map, clearLines, drawRoute, routeAnimation]
+  );
+
+  // ---- 路线节点排序 ----
+  const handleMoveUp = useCallback(
+    async (orderIndex: number) => {
+      if (!routePlan || orderIndex <= 0) return;
+      const newOrder = [...routePlan.order];
+      [newOrder[orderIndex - 1], newOrder[orderIndex]] = [newOrder[orderIndex], newOrder[orderIndex - 1]];
+
+      clearLines();
+      routeAnimation.cleanup();
+      setPlanning(true);
+
+      const plan = await planSmartRoute(userLocation, newOrder, transportPrefs);
+      setRoutePlan(plan);
+      setFoundPOIs(plan.order);
+      setMultiPlan(null);
+      if (map) drawRoute(map, plan);
+      if (map) routeAnimation.init(map, plan);
+
+      setPlanning(false);
+    },
+    [routePlan, userLocation, transportPrefs, map, clearLines, drawRoute, routeAnimation]
+  );
+
+  const handleMoveDown = useCallback(
+    async (orderIndex: number) => {
+      if (!routePlan || orderIndex >= routePlan.order.length - 1) return;
+      const newOrder = [...routePlan.order];
+      [newOrder[orderIndex], newOrder[orderIndex + 1]] = [newOrder[orderIndex + 1], newOrder[orderIndex]];
+
+      clearLines();
+      routeAnimation.cleanup();
+      setPlanning(true);
+
+      const plan = await planSmartRoute(userLocation, newOrder, transportPrefs);
+      setRoutePlan(plan);
+      setFoundPOIs(plan.order);
+      setMultiPlan(null);
+      if (map) drawRoute(map, plan);
+      if (map) routeAnimation.init(map, plan);
+
+      setPlanning(false);
+    },
+    [routePlan, userLocation, transportPrefs, map, clearLines, drawRoute, routeAnimation]
   );
 
   // ---- 保存路线 ----
@@ -573,6 +665,8 @@ export default function Home() {
                   selected={routePool}
                   loading={feedLoading}
                   onToggle={handleTogglePool}
+                  onLoadMore={handleLoadMore}
+                  loadingMoreCat={loadingMoreCat}
                 />
               )}
               {feedGroups.length > 0 && routePool.length === 0 && (
@@ -637,6 +731,8 @@ export default function Home() {
               onSave={handleSaveRoute}
               saveDisabled={saveDisabled}
               onRefreshStore={handleRefreshStore}
+              onMoveUp={handleMoveUp}
+              onMoveDown={handleMoveDown}
             />
           )}
 

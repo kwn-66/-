@@ -27,7 +27,7 @@ export function createInteractiveRoute(
   onHover?: (index: number, e: { lnglat: { lng: number; lat: number } }) => void,
   onLeave?: (index: number) => void
 ): HoverablePolyline {
-  const color = modeColor(segment.mode);
+  const color = modeColor(segment.mode, segment.transitType);
 
   // 白色描边
   const outline = new window.AMap.Polyline({
@@ -78,11 +78,15 @@ export function createInteractiveRoute(
         : `${Math.ceil(segment.duration / 60)}分钟`;
 
     if (infoWindow) infoWindow.close();
+    const modeStr = segment.transitName
+      ? segment.transitName
+      : modeLabel(segment.mode);
+
     const newInfo = new window.AMap.InfoWindow({
       content: `
         <div style="padding: 8px 12px; font-size: 13px; font-family: -apple-system, sans-serif;">
           <div style="font-weight: 600; margin-bottom: 3px;">
-            ${modeLabel(segment.mode)} ${durStr}
+            ${modeStr} ${durStr}
           </div>
           <div style="color: #999; font-size: 11px;">
             ${distStr} · ${segment.from.name} → ${segment.to.name}

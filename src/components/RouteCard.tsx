@@ -36,6 +36,8 @@ interface RouteCardProps {
   onSave?: (title: string) => void;
   saveDisabled?: boolean;
   onRefreshStore?: (index: number) => void;
+  onMoveUp?: (orderIndex: number) => void;
+  onMoveDown?: (orderIndex: number) => void;
 }
 
 export default function RouteCard({
@@ -53,6 +55,8 @@ export default function RouteCard({
   onSave,
   saveDisabled,
   onRefreshStore,
+  onMoveUp,
+  onMoveDown,
 }: RouteCardProps) {
   const [showSaveInput, setShowSaveInput] = useState(false);
   const [saveTitle, setSaveTitle] = useState("");
@@ -211,7 +215,12 @@ export default function RouteCard({
             {routePlan.segments.map((seg, idx) => {
               const isActive =
                 animSegmentIndex !== undefined && animSegmentIndex === idx && isAnimating;
-              const color = modeColor(seg.mode);
+              const color = modeColor(seg.mode, seg.transitType);
+              const isTransitLeg = seg.mode === "transit";
+              const hasCategory = !!seg.to.categoryIcon;
+              const canReorder = seg.orderIndex !== undefined && onMoveUp && onMoveDown;
+              const isFirst = seg.orderIndex === 0;
+              const isLast = seg.orderIndex !== undefined && seg.orderIndex === routePlan.order.length - 1;
 
               return (
                 <div
@@ -247,7 +256,7 @@ export default function RouteCard({
                           </span>
                         )}
                       </span>
-                      {onRefreshStore && (
+                      {onRefreshStore && hasCategory && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -262,6 +271,36 @@ export default function RouteCard({
                           </svg>
                         </button>
                       )}
+                      {canReorder && (
+                        <span className="inline-flex gap-0.5 ml-0.5">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (!isFirst) onMoveUp!(seg.orderIndex!);
+                            }}
+                            disabled={isFirst}
+                            className="w-4 h-4 flex items-center justify-center rounded-full bg-secondary hover:bg-primary hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                            title="上移"
+                          >
+                            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                              <path d="M18 15l-6-6-6 6" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (!isLast) onMoveDown!(seg.orderIndex!);
+                            }}
+                            disabled={isLast}
+                            className="w-4 h-4 flex items-center justify-center rounded-full bg-secondary hover:bg-primary hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                            title="下移"
+                          >
+                            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                              <path d="M6 9l6 6 6-6" />
+                            </svg>
+                          </button>
+                        </span>
+                      )}
                     </p>
                     <p className="text-xs mt-0.5 flex items-center gap-2">
                       <span
@@ -269,7 +308,12 @@ export default function RouteCard({
                         style={{ backgroundColor: color }}
                       />
                       <span className="text-muted">
-                        {modeLabel(seg.mode)} · {formatDistance(seg.distance)} ·{" "}
+                        {isTransitLeg && seg.transitName
+                          ? `${seg.transitName}（${seg.stationCount ?? "?"}站）`
+                          : modeLabel(seg.mode)}
+                        {" · "}
+                        {formatDistance(seg.distance)}
+                        {" · "}
                         {formatDuration(seg.duration)}
                       </span>
                     </p>

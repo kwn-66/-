@@ -186,6 +186,46 @@ declare namespace AMap {
     routes: Route[];
   }
 
+  class Transfer {
+    constructor(opts?: TransferOptions);
+    search(
+      origin: [number, number],
+      destination: [number, number],
+      callback: (status: string, result: TransferResult) => void
+    ): void;
+  }
+
+  interface TransferOptions {
+    policy?: number;
+    city?: string;
+    cityd?: string;
+    extensions?: string;
+  }
+
+  interface TransferResult {
+    routes: TransitRoute[];
+  }
+
+  interface TransitRoute {
+    distance: number;
+    time: number;
+    segments: TransitSegment[];
+  }
+
+  interface TransitSegment {
+    transit_mode: string;
+    distance: number;
+    time: number;
+    path: [number, number][];
+    transit?: {
+      name: string;
+      via_num: number;
+      start_stop: { name: string; location: { lng: number; lat: number } };
+      end_stop: { name: string; location: { lng: number; lat: number } };
+    };
+    walking?: { distance: number; time: number; steps: Step[] };
+  }
+
   interface Route {
     distance: number;
     time: number;

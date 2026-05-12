@@ -8,6 +8,8 @@ interface StoreFeedProps {
   selected: POIResult[];
   loading: boolean;
   onToggle: (poi: POIResult) => void;
+  onLoadMore?: (catId: string) => void;
+  loadingMoreCat?: string | null;
 }
 
 function formatDistance(m: number | undefined): string {
@@ -30,6 +32,8 @@ export default function StoreFeed({
   selected,
   loading,
   onToggle,
+  onLoadMore,
+  loadingMoreCat,
 }: StoreFeedProps) {
   const selectedIds = new Set(selected.map((s) => s.id));
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -98,97 +102,117 @@ export default function StoreFeed({
 
             {/* 店铺列表 */}
             {!isCollapsed && (
-              <div className="divide-y divide-border/50">
-                {group.pois.map((poi) => {
-                  const isSelected = selectedIds.has(poi.id);
-                  const showLinks = expandedLinks === poi.id;
-                  return (
-                    <div
-                      key={poi.id}
-                      onClick={() => onToggle(poi)}
-                      className={`flex items-start gap-2.5 px-3 py-2.5 transition-colors cursor-pointer active:bg-secondary/50 ${
-                        isSelected ? "bg-primary-light" : ""
-                      }`}
-                    >
-                      {/* 勾选框 */}
+              <>
+                <div className="divide-y divide-border/50">
+                  {group.pois.map((poi) => {
+                    const isSelected = selectedIds.has(poi.id);
+                    const showLinks = expandedLinks === poi.id;
+                    return (
                       <div
-                        className={`shrink-0 w-5 h-5 mt-0.5 rounded border-2 flex items-center justify-center transition-colors ${
-                          isSelected ? "bg-primary border-primary" : "border-muted/30"
+                        key={poi.id}
+                        onClick={() => onToggle(poi)}
+                        className={`flex items-start gap-2.5 px-3 py-2.5 transition-colors cursor-pointer active:bg-secondary/50 ${
+                          isSelected ? "bg-primary-light" : ""
                         }`}
                       >
-                        {isSelected && (
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
-                            <path d="M20 6L9 17l-5-5" />
-                          </svg>
-                        )}
-                      </div>
-
-                      {/* 内容 */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-2">
-                          <p
-                            className="text-sm font-medium truncate transition-all hover:text-primary hover:scale-[1.02] cursor-pointer"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openStoreLink(poi.name);
-                            }}
-                          >
-                            {poi.name}
-                          </p>
-                          {poi.distance && (
-                            <span className="text-xs text-muted shrink-0">
-                              {formatDistance(poi.distance)}
-                            </span>
+                        {/* 勾选框 */}
+                        <div
+                          className={`shrink-0 w-5 h-5 mt-0.5 rounded border-2 flex items-center justify-center transition-colors ${
+                            isSelected ? "bg-primary border-primary" : "border-muted/30"
+                          }`}
+                        >
+                          {isSelected && (
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
+                              <path d="M20 6L9 17l-5-5" />
+                            </svg>
                           )}
                         </div>
-                        <p className="text-xs text-muted truncate mt-0.5">
-                          {poi.address}
-                        </p>
 
-                        {/* 展开多平台链接 */}
-                        {showLinks && (
-                          <div
-                            className="flex gap-1 mt-1.5"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {[
-                              { label: "美团", url: `https://i.meituan.com/s/${encodeURIComponent(poi.name)}` },
-                              { label: "大众点评", url: `https://www.dianping.com/search/keyword/1/0_${encodeURIComponent(poi.name)}` },
-                              { label: "高德", url: `https://uri.amap.com/search?keyword=${encodeURIComponent(poi.name)}` },
-                              { label: "抖音", url: `https://www.douyin.com/search/${encodeURIComponent(poi.name)}` },
-                            ].map(({ label, url }) => (
-                              <a
-                                key={label}
-                                href={url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="px-1.5 py-0.5 bg-secondary border border-border rounded text-xs text-muted hover:border-primary hover:text-primary transition-colors"
-                              >
-                                {label}
-                              </a>
-                            ))}
+                        {/* 内容 */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <p
+                              className="text-sm font-medium truncate transition-all hover:text-primary hover:scale-[1.02] cursor-pointer"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openStoreLink(poi.name);
+                              }}
+                            >
+                              {poi.name}
+                            </p>
+                            {poi.distance && (
+                              <span className="text-xs text-muted shrink-0">
+                                {formatDistance(poi.distance)}
+                              </span>
+                            )}
                           </div>
-                        )}
-                      </div>
+                          <p className="text-xs text-muted truncate mt-0.5">
+                            {poi.address}
+                          </p>
 
-                      {/* 更多链接按钮 */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setExpandedLinks(showLinks ? null : poi.id);
-                        }}
-                        className="shrink-0 w-4 h-4 flex items-center justify-center text-muted hover:text-primary transition-colors"
-                      >
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                          <circle cx="5" cy="12" r="2" />
-                          <circle cx="12" cy="12" r="2" />
-                          <circle cx="19" cy="12" r="2" />
-                        </svg>
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+                          {/* 展开多平台链接 */}
+                          {showLinks && (
+                            <div
+                              className="flex gap-1 mt-1.5"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {[
+                                { label: "美团", url: `https://i.meituan.com/s/${encodeURIComponent(poi.name)}` },
+                                { label: "大众点评", url: `https://www.dianping.com/search/keyword/1/0_${encodeURIComponent(poi.name)}` },
+                                { label: "高德", url: `https://uri.amap.com/search?keyword=${encodeURIComponent(poi.name)}` },
+                                { label: "抖音", url: `https://www.douyin.com/search/${encodeURIComponent(poi.name)}` },
+                              ].map(({ label, url }) => (
+                                <a
+                                  key={label}
+                                  href={url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-1.5 py-0.5 bg-secondary border border-border rounded text-xs text-muted hover:border-primary hover:text-primary transition-colors"
+                                >
+                                  {label}
+                                </a>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* 更多链接按钮 */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExpandedLinks(showLinks ? null : poi.id);
+                          }}
+                          className="shrink-0 w-4 h-4 flex items-center justify-center text-muted hover:text-primary transition-colors"
+                        >
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                            <circle cx="5" cy="12" r="2" />
+                            <circle cx="12" cy="12" r="2" />
+                            <circle cx="19" cy="12" r="2" />
+                          </svg>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* 加载更多 */}
+                {onLoadMore && group.pois.length >= 15 && (
+                  <button
+                    onClick={() => onLoadMore(group.categoryId)}
+                    disabled={loadingMoreCat === group.categoryId}
+                    className="w-full py-2 text-xs text-muted hover:text-primary hover:bg-secondary/50 transition-colors flex items-center justify-center gap-1"
+                  >
+                    {loadingMoreCat === group.categoryId ? (
+                      <>
+                        <div className="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                        加载中...
+                      </>
+                    ) : (
+                      "加载更多"
+                    )}
+                  </button>
+                )}
+              </>
             )}
           </div>
         );
